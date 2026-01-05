@@ -107,35 +107,20 @@ async function sendEmailOtp(targetEmail) {
   const user = await User.findOne({ email: targetEmail });
   if (!user) throw new Error("User dengan email ini tidak ditemukan.");
 
+  await transporter.sendMail({
+    from: `"${process.env.APP_NAME}" <${process.env.EMAIL_SENDER}>`,
+    to: targetEmail,
+    subject: `${otp} - Kode Verifikasi`,
+    html: `<p>Kode OTP Anda: <b>${otp}</b></p>`,
+  });
+
   await User.updateOne(
     { _id: user._id },
-    {
-      $set: {
-        otpCode: otp,
-        otpExpiry: otpExpiry,
-      },
-    }
+    { $set: { otpCode: otp, otpExpiry } }
   );
-
-  try {
-    await transporter.sendMail({
-      from: `"${process.env.APP_NAME || "Antrikuy"}" <${
-        process.env.EMAIL_SENDER
-      }>`,
-      to: targetEmail,
-      subject: `${otp} - Kode Verifikasi`,
-      html: `<p>Kode OTP Anda: <b>${otp}</b></p>`,
-    });
-  } catch (err) {
-    console.error("🔥 SMTP FAILED:", err);
-    throw new Error("Gagal mengirim email OTP");
-  }
-
-  transporter.verify((err, success) => {
-    if (err) console.error("SMTP VERIFY FAIL:", err);
-    else console.log("SMTP READY:", success);
-  });
 }
+
+
 
 async function verifyOtpCode(target, otpCode) {
   let user = await User.findOne({ $or: [{ email: target }, { noHp: target }] });

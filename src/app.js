@@ -63,6 +63,8 @@ app.use((err, req, res, next) => {
 
 connectDB();
 
+const transporter = require("./config/mailer");
+
 mongoose.connection.on("connected", () => {
   console.log("✅ MongoDB Connected");
 
@@ -74,5 +76,14 @@ mongoose.connection.on("connected", () => {
   app.listen(PORT, HOST, () => {
     console.log(`🚀 Server backend berjalan di http://localhost:${PORT}`);
     console.log(`🌐 Akses Eksternal/Emulator di ${HOST}:${PORT}`);
+
+    transporter
+      .verify()
+      .then(() => {
+        console.log("✅ SMTP Brevo READY");
+      })
+      .catch((err) => {
+        console.error("❌ SMTP Brevo FAILED:", err);
+      });
   });
 });
