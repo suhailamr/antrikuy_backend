@@ -8,13 +8,25 @@ const mongoose = require("mongoose");
 const { sendPushNotification } = require("../utils/notificationHelper");
 
 // 1. Ambil sekolah yang SUDAH AKTIF (Untuk Dashboard Utama)
+// src/controllers/superAdminController.js
+
 exports.getAllSchools = async (req, res) => {
   try {
-    // 🔥 FILTER: Hanya ambil yang penyediaAntrian-nya sudah TRUE (Sudah di-approve)
-    const schools = await School.find({ penyediaAntrian: true }).sort({ namaSekolah: 1 });
-    res.status(200).json({ status: "success", data: schools });
+    // Ambil semua data
+    const allSchools = await School.find().sort({ namaSekolah: 1 });
+
+    // Filter secara manual menggunakan fungsi JavaScript (Lebih Pasti)
+    const filtered = allSchools.filter((s) => s.penyediaAntrian === true);
+
+    console.log(
+      `🔍 DEBUG: Total ${allSchools.length}, Lolos Filter: ${filtered.length}`
+    );
+
+    res.status(200).json({
+      status: "success",
+      data: filtered,
+    });
   } catch (err) {
-    console.error("🚨 Error getAllSchools:", err);
     res.status(500).json({ message: "Gagal mengambil daftar sekolah" });
   }
 };
@@ -29,13 +41,15 @@ exports.getPendingSchools = async (req, res) => {
     const data = await Promise.all(
       pendingSchools.map(async (school) => {
         // Cari user yang merupakan pembuat (createdBy) sekolah tersebut
-        const user = await User.findById(school.createdBy); 
-        
+        const user = await User.findById(school.createdBy);
+
         // Fallback jika createdBy kosong, cari berdasarkan idSekolah (logika lama Anda)
-        const fallbackUser = user || await User.findOne({ 
-          idSekolah: school.idSekolah,
-          peran: "PENGGUNA" 
-        });
+        const fallbackUser =
+          user ||
+          (await User.findOne({
+            idSekolah: school.idSekolah,
+            peran: "PENGGUNA",
+          }));
 
         if (!fallbackUser) return null;
         return { school, user: fallbackUser };
@@ -46,7 +60,9 @@ exports.getPendingSchools = async (req, res) => {
     res.status(200).json({ status: "success", data: result });
   } catch (err) {
     console.error("🚨 Error getPendingSchools:", err);
-    res.status(500).json({ message: "Server gagal memproses daftar pendaftaran" });
+    res
+      .status(500)
+      .json({ message: "Server gagal memproses daftar pendaftaran" });
   }
 };
 
@@ -55,7 +71,8 @@ exports.reviewSchoolRequest = async (req, res) => {
   const { schoolId, userId, action } = req.body;
   try {
     const school = await School.findById(schoolId);
-    if (!school) return res.status(404).json({ message: "Sekolah tidak ditemukan" });
+    if (!school)
+      return res.status(404).json({ message: "Sekolah tidak ditemukan" });
 
     // Cari data user lengkap untuk mendapatkan fcmToken
     const targetUser = await User.findById(userId);
@@ -65,9 +82,9 @@ exports.reviewSchoolRequest = async (req, res) => {
       await school.save();
 
       await User.findByIdAndUpdate(userId, {
-        peran: "ADMIN", 
+        peran: "ADMIN",
         idSekolah: school.idSekolah,
-        sekolah: school._id 
+        sekolah: school._id,
       });
 
       await SchoolMember.findOneAndUpdate(
@@ -85,7 +102,6 @@ exports.reviewSchoolRequest = async (req, res) => {
           { type: "SCHOOL_APPROVED", schoolId: school._id.toString() }
         );
       }
-
     } else {
       // Logic jika ditolak
       if (targetUser && targetUser.fcmToken) {
@@ -96,7 +112,7 @@ exports.reviewSchoolRequest = async (req, res) => {
           { type: "SCHOOL_REJECTED" }
         );
       }
-      
+
       await SchoolMember.deleteMany({ school: schoolId });
       await School.findByIdAndDelete(schoolId);
     }
