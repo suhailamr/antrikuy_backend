@@ -6,11 +6,15 @@ const nodemailer = require("nodemailer");
 
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
-  port: process.env.SMTP_PORT,
-  secure: true,
+  port: 465, // Paksa ke 465
+  secure: true, // WAJIB true untuk port 465
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
+  },
+  // Tambahkan ini untuk memastikan koneksi tidak ditolak
+  tls: {
+    rejectUnauthorized: false,
   },
 });
 
