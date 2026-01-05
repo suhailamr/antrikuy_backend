@@ -5,16 +5,13 @@ const crypto = require("crypto");
 const nodemailer = require("nodemailer");
 
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: 465, // Paksa ke 465 agar lebih stabil di Railway
-  secure: true, // WAJIB true untuk port 465
+  host: process.env.SMTP_HOST, // smtp-relay.brevo.com
+  port: 587,
+  secure: false, // ❗ HARUS false
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
-  tls: {
-    rejectUnauthorized: false
-  }
 });
 
 // services/authService.js
@@ -120,16 +117,24 @@ async function sendEmailOtp(targetEmail) {
     }
   );
 
-  transporter
-    .sendMail({
+  try {
+    await transporter.sendMail({
       from: `"${process.env.APP_NAME || "Antrikuy"}" <${
         process.env.EMAIL_SENDER
       }>`,
       to: targetEmail,
       subject: `${otp} - Kode Verifikasi`,
       html: `<p>Kode OTP Anda: <b>${otp}</b></p>`,
-    })
-    .catch((err) => console.error("🔥 EMAIL OTP ERROR:", err));
+    });
+  } catch (err) {
+    console.error("🔥 SMTP FAILED:", err);
+    throw new Error("Gagal mengirim email OTP");
+  }
+
+  transporter.verify((err, success) => {
+    if (err) console.error("SMTP VERIFY FAIL:", err);
+    else console.log("SMTP READY:", success);
+  });
 }
 
 async function verifyOtpCode(target, otpCode) {
