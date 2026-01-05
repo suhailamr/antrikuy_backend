@@ -2,9 +2,13 @@ const User = require("../models/User");
 const admin = require("firebase-admin");
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
-const transporter = require("../config/mailer");
 
-// services/authService.js
+const SibApiV3Sdk = require("sib-api-v3-sdk");
+
+const client = SibApiV3Sdk.ApiClient.instance;
+client.authentications["api-key"].apiKey = process.env.BREVO_API_KEY;
+
+const transactionalApi = new SibApiV3Sdk.TransactionalEmailsApi();
 
 // 🔥 PERBAIKAN: Terima parameter 'user' untuk cek peran
 function validateBiodataRequired(user, body = {}) {
@@ -97,20 +101,36 @@ async function sendEmailOtp(targetEmail) {
   const user = await User.findOne({ email: targetEmail });
   if (!user) throw new Error("User dengan email ini tidak ditemukan.");
 
-  await transporter.sendMail({
-    from: `"${process.env.APP_NAME}" <${process.env.EMAIL_SENDER}>`,
-    to: targetEmail,
-    subject: `${otp} - Kode Verifikasi`,
-    html: `<p>Kode OTP Anda: <b>${otp}</b></p>`,
-  });
+  async function sendEmailOtp(targetEmail) {
+    if (!targetEmail) throw new Error("Email tujuan wajib diisi.");
+
+    const otp = crypto.randomInt(100000, 999999).toString();
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
+
+    const user = await User.findOne({ email: targetEmail });
+    if (!user) throw new Error("User dengan email ini tidak ditemukan.");
+
+    await transactionalApi.sendTransacEmail({
+      sender: {
+        email: process.env.EMAIL_SENDER,
+        name: process.env.APP_NAME,
+      },
+      to: [{ email: targetEmail }],
+      subject: `${otp} - Kode Verifikasi`,
+      htmlContent: `<p>Kode OTP Anda: <b>${otp}</b></p>`,
+    });
+
+    await User.updateOne(
+      { _id: user._id },
+      { $set: { otpCode: otp, otpExpiry } }
+    );
+  }
 
   await User.updateOne(
     { _id: user._id },
     { $set: { otpCode: otp, otpExpiry } }
   );
 }
-
-
 
 async function verifyOtpCode(target, otpCode) {
   let user = await User.findOne({ $or: [{ email: target }, { noHp: target }] });
