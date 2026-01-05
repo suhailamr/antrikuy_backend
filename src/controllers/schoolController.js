@@ -572,75 +572,34 @@ exports.approveAdminRequest = async (req, res) => {
   }
 };
 
-// controllers/schoolController.js
-
+// ==========================================
+// 11. REQUEST NEW SCHOOL (DAFTAR SEKOLAH BARU)
+// ==========================================
 exports.requestNewSchool = async (req, res) => {
   try {
-    const { namaSekolah, alamat, npsn } = req.body;
-    const userId = req.user.uid; // Asumsi dari middleware auth
+    const { namaSekolah, kategoriSekolah, alamat, deskripsi, lat, lng } = req.body;
+    
+    // Pastikan req.user ada (dari middleware auth)
+    // Gunakan _id jika menggunakan MongoDB ID, atau UID jika menggunakan Firebase
+    const userObjectId = req.user._id; 
 
-    // 1. Validasi Input
-    if (!namaSekolah)
-      return res.status(400).json({ message: "Nama sekolah wajib diisi" });
-
-    // 2. Buat Sekolah Baru (Status Default: PENDING / Verified: false)
-    const newSchool = new School({
-      namaSekolah,
-      alamat,
-      npsn,
-      isVerified: false, // Penting: Menandakan ini baru pengajuan
-      status: "PENDING",
-      createdBy: userId,
-      // Jika ada upload gambar/bukti, handle di sini (req.file)
-      // evidenceUrl: req.file ? req.file.path : null
-    });
-
-    const savedSchool = await newSchool.save();
-
-    // 3. Otomatis jadikan Pengaju sebagai ADMIN sekolah tersebut
-    //    Namun, status membershipnya mungkin 'PENDING' sampai sekolah disetujui
-    const newMember = new SchoolMember({
-      schoolId: savedSchool._id,
-      userId: userId,
-      role: "ADMIN",
-      status: "ACTIVE", // Atau 'PENDING' tergantung logic approval Anda
-    });
-
-    await newMember.save();
-
-    res.status(201).json({
-      message: "Pengajuan sekolah berhasil dikirim.",
-      data: savedSchool,
-    });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
-exports.requestNewSchool = async (req, res) => {
-  try {
-    const { namaSekolah, kategoriSekolah, alamat, deskripsi, lat, lng } =
-      req.body;
-    const userId = req.user.uid;
+    if (!namaSekolah || !kategoriSekolah) {
+      return res.status(400).json({ message: "Nama dan Kategori sekolah wajib diisi" });
+    }
 
     // 1. Generate ID Sekolah (Slug)
-    // Contoh: "SMK Yaspika Karimun" -> "SMK-YASPIKA-KARIMUN"
     const generatedId = namaSekolah
-      .replace(/[^a-zA-Z0-9 ]/g, "") // Hapus simbol aneh
+      .replace(/[^a-zA-Z0-9 ]/g, "")
       .trim()
-      .replace(/\s+/g, "-") // Spasi jadi dash
+      .replace(/\s+/g, "-")
       .toUpperCase();
 
-    // 2. Generate Kode Akses Statis (Random simple)
-    // Ambil kata pertama + angka random. Contoh: "SMK839"
-    const firstWord = namaSekolah
-      .split(" ")[0]
-      .toUpperCase()
-      .replace(/[^A-Z]/g, "");
-    const randomNum = Math.floor(100 + Math.random() * 900); // 3 digit angka
+    // 2. Generate Kode Akses Statis (Random 3 angka)
+    const firstWord = namaSekolah.split(" ")[0].toUpperCase().replace(/[^A-Z]/g, "");
+    const randomNum = Math.floor(100 + Math.random() * 900);
     const generatedKode = `${firstWord}${randomNum}`;
 
-    // 3. Buat Object Sekolah
+    // 3. Simpan data Sekolah ke Database
     const newSchool = new School({
       namaSekolah,
       kategoriSekolah,
@@ -648,48 +607,52 @@ exports.requestNewSchool = async (req, res) => {
       deskripsi,
       idSekolah: generatedId,
       kodeAksesStatis: generatedKode,
-      penyediaAntrian: true, // Sesuai data kamu
+      penyediaAntrian: true,
       lokasiMaps: {
         lat: lat ? parseFloat(lat) : 0.0,
         lng: lng ? parseFloat(lng) : 0.0,
       },
-      fotoUrl: "https://via.placeholder.com/150", // Default atau upload nanti
-      createdBy: userId,
-      status: "PENDING",
+      createdBy: userObjectId,
+      status: "PENDING", // Status sekolah baru adalah PENDING
     });
 
     const savedSchool = await newSchool.save();
 
-    // 4. Jadikan User sebagai ADMIN
-    const SchoolMember = require("../models/SchoolMember"); // Import model member
+    // 4. 🔥 FIX VALIDASI: Buat record SchoolMember (Pendaftar otomatis jadi Admin)
+    // Sesuaikan value enum ('pending', 'approved', 'ADMIN') dengan Model Anda!
     await SchoolMember.create({
-      schoolId: savedSchool._id,
-      userId: userId,
-      role: "ADMIN",
-      status: "ACTIVE",
+      user: userObjectId,      // Sesuaikan nama field di model (user, bukan userId)
+      school: savedSchool._id, // Sesuaikan nama field di model (school, bukan schoolId)
+      role: "ADMIN",           // Pastikan 'ADMIN' ada di enum model SchoolMember
+      status: "pending"        // Biasanya pending sampai sekolah diverifikasi Super Admin
     });
 
     res.status(201).json({
-      message: "Berhasil request sekolah",
+      message: "Pengajuan sekolah berhasil dikirim",
       data: savedSchool,
     });
   } catch (error) {
-    console.error(error);
-    res
-      .status(500)
-      .json({ message: "Gagal memproses data", error: error.message });
+    console.error("🚨 Request School Error:", error);
+    res.status(500).json({ 
+      message: "Gagal memproses pendaftaran sekolah", 
+      error: error.message 
+    });
   }
 };
 
+// ==========================================
+// 12. GET ADMIN STATS (DASHBOARD)
+// ==========================================
 exports.getAdminStats = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    if (!schoolId)
-      return res.status(400).json({ message: "Admin tidak punya sekolah." });
+    const schoolId = req.user.sekolah; // Pastikan fieldnya 'sekolah' sesuai req.user Anda
+    if (!schoolId) {
+      return res.status(400).json({ message: "Admin tidak memiliki akses sekolah." });
+    }
 
-    // AMBIL SEMUA DATA (Hapus filter startOfDay jika ingin melihat data lama)
-    const queues = await Queue.find({ school: schoolId })
-      .populate("user", "name fotoProfil")
+    // Gunakan model QueueEntry (sesuaikan dengan import di atas)
+    const queues = await QueueEntry.find({ event: { $in: await Event.find({ sekolah: schoolId }).select('_id') } })
+      .populate("pengguna", "namaPengguna fotoProfil")
       .populate("event", "namaKegiatan")
       .sort({ createdAt: 1 });
 
@@ -716,9 +679,24 @@ exports.getAdminStats = async (req, res) => {
       data: { stats, servingNow, nextInLine, waitingList },
     });
   } catch (error) {
+    console.error("🚨 Admin Stats Error:", error);
     res.status(500).json({ message: "Gagal mengambil data dashboard" });
   }
 };
+
+// Helper function
+function formatObj(q) {
+  return {
+    _id: q._id,
+    nomorAntrian: q.nomorAntrian,
+    statusAntrian: q.statusAntrian,
+    user: { 
+      name: q.pengguna?.namaPengguna || "User", 
+      foto: q.pengguna?.fotoProfil 
+    },
+    event: { namaKegiatan: q.event?.namaKegiatan || "-" },
+  };
+}
 
 function formatObj(q) {
   return {
