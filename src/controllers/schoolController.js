@@ -579,25 +579,25 @@ exports.requestNewSchool = async (req, res) => {
   try {
     const { namaSekolah, kategoriSekolah, alamat, deskripsi, lat, lng } = req.body;
     
-    // Pastikan req.user ada (dari middleware auth)
-    // Gunakan _id jika menggunakan MongoDB ID, atau UID jika menggunakan Firebase
+    // 🔥 Pastikan mengambil ID MongoDB User (_id), bukan UID Firebase
     const userObjectId = req.user._id; 
 
-    if (!namaSekolah || !kategoriSekolah) {
-      return res.status(400).json({ message: "Nama dan Kategori sekolah wajib diisi" });
+    if (!userObjectId) {
+      return res.status(401).json({ message: "User ID tidak ditemukan. Harap login ulang." });
     }
 
-    // 1. Generate ID Sekolah (Slug)
-    const generatedId = namaSekolah
+    // 1. Generate ID Sekolah (Slug) + Suffix Unik agar tidak E11000 (Duplicate)
+    const slug = namaSekolah
       .replace(/[^a-zA-Z0-9 ]/g, "")
       .trim()
       .replace(/\s+/g, "-")
       .toUpperCase();
+    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+    const generatedId = `${slug}-${randomSuffix}`;
 
-    // 2. Generate Kode Akses Statis (Random 3 angka)
+    // 2. Generate Kode Akses Statis
     const firstWord = namaSekolah.split(" ")[0].toUpperCase().replace(/[^A-Z]/g, "");
-    const randomNum = Math.floor(100 + Math.random() * 900);
-    const generatedKode = `${firstWord}${randomNum}`;
+    const generatedKode = `${firstWord}${Math.floor(100 + Math.random() * 900)}`;
 
     // 3. Simpan data Sekolah ke Database
     const newSchool = new School({
@@ -613,26 +613,40 @@ exports.requestNewSchool = async (req, res) => {
         lng: lng ? parseFloat(lng) : 0.0,
       },
       createdBy: userObjectId,
-      status: "PENDING", // Status sekolah baru adalah PENDING
+      status: "PENDING", 
     });
 
     const savedSchool = await newSchool.save();
 
-    // 4. 🔥 FIX VALIDASI: Buat record SchoolMember (Pendaftar otomatis jadi Admin)
-    // Sesuaikan value enum ('pending', 'approved', 'ADMIN') dengan Model Anda!
+    // 4. 🔥 PERBAIKAN VALIDASI: Sesuaikan dengan Schema SchoolMember.js
     await SchoolMember.create({
-      user: userObjectId,      // Sesuaikan nama field di model (user, bukan userId)
-      school: savedSchool._id, // Sesuaikan nama field di model (school, bukan schoolId)
-      role: "ADMIN",           // Pastikan 'ADMIN' ada di enum model SchoolMember
-      status: "pending"        // Biasanya pending sampai sekolah diverifikasi Super Admin
+      school: savedSchool._id,   // Field 'school' sesuai schema
+      user: userObjectId,        // Field 'user' sesuai schema
+      status: "approved",        // Gunakan huruf kecil sesuai enum schema kamu
+      role: "admin",             // Gunakan huruf kecil sesuai enum schema kamu
+      adminRequestStatus: "NONE" // Default sesuai schema
+    });
+
+    // 5. Update data User agar langsung terhubung ke sekolah ini
+    await User.findByIdAndUpdate(userObjectId, {
+      sekolah: savedSchool._id,
+      idSekolah: savedSchool.idSekolah,
+      peran: "ADMIN"
     });
 
     res.status(201).json({
-      message: "Pengajuan sekolah berhasil dikirim",
+      success: true,
+      message: "Pendaftaran sekolah berhasil dan Anda telah menjadi Admin.",
       data: savedSchool,
     });
+
   } catch (error) {
     console.error("🚨 Request School Error:", error);
+    
+    if (error.code === 11000) {
+      return res.status(400).json({ message: "ID Sekolah sudah terpakai, coba nama lain." });
+    }
+    
     res.status(500).json({ 
       message: "Gagal memproses pendaftaran sekolah", 
       error: error.message 
