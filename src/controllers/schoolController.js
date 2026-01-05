@@ -602,12 +602,13 @@ exports.requestNewSchool = async (req, res) => {
     // 3. Simpan data Sekolah ke Database
     const newSchool = new School({
       namaSekolah,
+      npsn,
       kategoriSekolah,
       alamat,
       deskripsi,
       idSekolah: generatedId,
       kodeAksesStatis: generatedKode,
-      penyediaAntrian: true,
+      penyediaAntrian: false,
       lokasiMaps: {
         lat: lat ? parseFloat(lat) : 0.0,
         lng: lng ? parseFloat(lng) : 0.0,
@@ -622,7 +623,7 @@ exports.requestNewSchool = async (req, res) => {
     await SchoolMember.create({
       school: savedSchool._id,   // Field 'school' sesuai schema
       user: userObjectId,        // Field 'user' sesuai schema
-      status: "approved",        // Gunakan huruf kecil sesuai enum schema kamu
+      status: "pending",        // Gunakan huruf kecil sesuai enum schema kamu
       role: "admin",             // Gunakan huruf kecil sesuai enum schema kamu
       adminRequestStatus: "NONE" // Default sesuai schema
     });

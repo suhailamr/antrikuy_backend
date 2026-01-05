@@ -12,7 +12,7 @@ const Event = require("../models/Events");
 
 // Public / User Biasa
 router.get("/", protect, schoolController.listSchools);
-router.post("/", schoolController.createSchool); // Jika ini public registration
+router.post('/request', protect, schoolController.requestNewSchool);
 router.get("/my", protect, schoolController.getMySchoolStatus);
 
 router.get(
