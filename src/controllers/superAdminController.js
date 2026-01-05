@@ -5,11 +5,13 @@ const QueueEntry = require("../models/QueueEntry");
 const SchoolMember = require("../models/SchoolMember");
 const DissolveRequest = require("../models/DissolveRequest");
 const mongoose = require("mongoose");
+const { sendPushNotification } = require("../utils/notificationHelper");
 
-// 1. Ambil SEMUA sekolah
+// 1. Ambil sekolah yang SUDAH AKTIF (Untuk Dashboard Utama)
 exports.getAllSchools = async (req, res) => {
   try {
-    const schools = await School.find().sort({ namaSekolah: 1 });
+    // 🔥 FILTER: Hanya ambil yang penyediaAntrian-nya sudah TRUE (Sudah di-approve)
+    const schools = await School.find({ penyediaAntrian: true }).sort({ namaSekolah: 1 });
     res.status(200).json({ status: "success", data: schools });
   } catch (err) {
     console.error("🚨 Error getAllSchools:", err);
@@ -17,35 +19,34 @@ exports.getAllSchools = async (req, res) => {
   }
 };
 
-// 2. Ambil pengajuan PENDING (Sekolah Baru)
 // Ambil pengajuan PENDING (Pendaftaran Sekolah Baru)
+// 2. Ambil pengajuan PENDING (Pendaftaran Sekolah Baru)
 exports.getPendingSchools = async (req, res) => {
   try {
-    // Cari sekolah yang penyediaAntrian-nya masih false
+    // 🔥 FILTER: Hanya ambil yang penyediaAntrian-nya FALSE (Masih pengajuan)
     const pendingSchools = await School.find({ penyediaAntrian: false });
 
-    // Kita harus mencari user yang mengajukan sekolah tersebut
-    // Gunakan Promise.all agar tidak lambat
     const data = await Promise.all(
       pendingSchools.map(async (school) => {
-        const user = await User.findOne({
+        // Cari user yang merupakan pembuat (createdBy) sekolah tersebut
+        const user = await User.findById(school.createdBy); 
+        
+        // Fallback jika createdBy kosong, cari berdasarkan idSekolah (logika lama Anda)
+        const fallbackUser = user || await User.findOne({ 
           idSekolah: school.idSekolah,
-          peran: "PENGGUNA",
+          peran: "PENGGUNA" 
         });
-        if (!user) return null; // Abaikan jika user pengaju tidak ketemu
-        return { school, user };
+
+        if (!fallbackUser) return null;
+        return { school, user: fallbackUser };
       })
     );
 
-    // Filter null values
     const result = data.filter((item) => item !== null);
-
     res.status(200).json({ status: "success", data: result });
   } catch (err) {
     console.error("🚨 Error getPendingSchools:", err);
-    res
-      .status(500)
-      .json({ message: "Server gagal memproses daftar pendaftaran" });
+    res.status(500).json({ message: "Server gagal memproses daftar pendaftaran" });
   }
 };
 
@@ -54,23 +55,55 @@ exports.reviewSchoolRequest = async (req, res) => {
   const { schoolId, userId, action } = req.body;
   try {
     const school = await School.findById(schoolId);
-    if (!school)
-      return res.status(404).json({ message: "Sekolah tidak ditemukan" });
+    if (!school) return res.status(404).json({ message: "Sekolah tidak ditemukan" });
+
+    // Cari data user lengkap untuk mendapatkan fcmToken
+    const targetUser = await User.findById(userId);
 
     if (action === "APPROVE") {
       school.penyediaAntrian = true;
       await school.save();
 
       await User.findByIdAndUpdate(userId, {
-        peran: "ADMIN_SEKOLAH",
+        peran: "ADMIN", 
         idSekolah: school.idSekolah,
+        sekolah: school._id 
       });
+
+      await SchoolMember.findOneAndUpdate(
+        { school: school._id, user: userId },
+        { status: "approved", role: "admin" },
+        { upsert: true }
+      );
+
+      // 🔥 KIRIM NOTIFIKASI PENERIMAAN
+      if (targetUser && targetUser.fcmToken) {
+        sendPushNotification(
+          targetUser.fcmToken,
+          "Selamat! Pengajuan Diterima 🎉",
+          `Sekolah ${school.namaSekolah} telah diverifikasi. Anda kini adalah Admin Sekolah.`,
+          { type: "SCHOOL_APPROVED", schoolId: school._id.toString() }
+        );
+      }
+
     } else {
+      // Logic jika ditolak
+      if (targetUser && targetUser.fcmToken) {
+        sendPushNotification(
+          targetUser.fcmToken,
+          "Update Pengajuan Sekolah 📋",
+          `Mohon maaf, pengajuan sekolah ${school.namaSekolah} belum dapat kami setujui saat ini.`,
+          { type: "SCHOOL_REJECTED" }
+        );
+      }
+      
+      await SchoolMember.deleteMany({ school: schoolId });
       await School.findByIdAndDelete(schoolId);
     }
+
     res.status(200).json({ message: `Berhasil melakukan ${action}` });
   } catch (err) {
-    res.status(500).json({ message: "Gagal memproses review" });
+    res.status(500).json({ message: "Gagal memproses review: " + err.message });
   }
 };
 
