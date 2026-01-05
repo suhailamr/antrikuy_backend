@@ -101,36 +101,24 @@ async function sendEmailOtp(targetEmail) {
   const user = await User.findOne({ email: targetEmail });
   if (!user) throw new Error("User dengan email ini tidak ditemukan.");
 
-  async function sendEmailOtp(targetEmail) {
-    if (!targetEmail) throw new Error("Email tujuan wajib diisi.");
+  // 🔥 KIRIM EMAIL VIA BREVO API
+  await transactionalApi.sendTransacEmail({
+    sender: {
+      email: process.env.EMAIL_SENDER,
+      name: process.env.APP_NAME,
+    },
+    to: [{ email: targetEmail }],
+    subject: `${otp} - Kode Verifikasi`,
+    htmlContent: `<p>Kode OTP Anda: <b>${otp}</b></p>`,
+  });
 
-    const otp = crypto.randomInt(100000, 999999).toString();
-    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
-
-    const user = await User.findOne({ email: targetEmail });
-    if (!user) throw new Error("User dengan email ini tidak ditemukan.");
-
-    await transactionalApi.sendTransacEmail({
-      sender: {
-        email: process.env.EMAIL_SENDER,
-        name: process.env.APP_NAME,
-      },
-      to: [{ email: targetEmail }],
-      subject: `${otp} - Kode Verifikasi`,
-      htmlContent: `<p>Kode OTP Anda: <b>${otp}</b></p>`,
-    });
-
-    await User.updateOne(
-      { _id: user._id },
-      { $set: { otpCode: otp, otpExpiry } }
-    );
-  }
-
+  // ✅ SIMPAN OTP SETELAH EMAIL BERHASIL
   await User.updateOne(
     { _id: user._id },
     { $set: { otpCode: otp, otpExpiry } }
   );
 }
+
 
 async function verifyOtpCode(target, otpCode) {
   let user = await User.findOne({ $or: [{ email: target }, { noHp: target }] });
