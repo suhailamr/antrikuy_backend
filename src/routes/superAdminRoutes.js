@@ -8,8 +8,8 @@ const superAdminOnly = [protect, authorize("SUPER_ADMIN")];
 const researcherAndAdmin = [protect, authorize("SUPER_ADMIN", "PENELITI")];
 
 // --- MANAJEMEN SEKOLAH UMUM ---
-router.get("/schools/all", researcherAndAdmin, superAdminController.getAllSchools);
 router.get("/schools/pending", researcherAndAdmin, superAdminController.getPendingSchools);
+router.get("/schools/all", researcherAndAdmin, superAdminController.getAllSchools);
 router.get("/schools/:schoolId", researcherAndAdmin, superAdminController.getSchoolById);
 router.get("/schools/:schoolId/members", researcherAndAdmin, superAdminController.getSchoolMembers);
 
