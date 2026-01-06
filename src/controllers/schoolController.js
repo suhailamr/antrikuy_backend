@@ -577,80 +577,87 @@ exports.approveAdminRequest = async (req, res) => {
 // ==========================================
 exports.requestNewSchool = async (req, res) => {
   try {
-    const { namaSekolah, npsn, kategoriSekolah, alamat, deskripsi, lat, lng } = req.body;
-    
-    // 🔥 Pastikan mengambil ID MongoDB User (_id), bukan UID Firebase
-    const userObjectId = req.user._id; 
+    // 1. Ambil NPSN dari req.body (tadi Anda lupa memasukkan variabel npsn di sini)
+    const { namaSekolah, npsn, kategoriSekolah, alamat, deskripsi, lat, lng } =
+      req.body;
+
+    // Ambil ID User dari middleware protect
+    const userObjectId = req.user._id;
 
     if (!userObjectId) {
-      return res.status(401).json({ message: "User ID tidak ditemukan. Harap login ulang." });
+      return res
+        .status(401)
+        .json({ message: "User ID tidak ditemukan. Harap login ulang." });
     }
 
-    // 1. Generate ID Sekolah (Slug) + Suffix Unik agar tidak E11000 (Duplicate)
+    // 2. Generate ID Sekolah (Slug) + Suffix Unik
     const slug = namaSekolah
       .replace(/[^a-zA-Z0-9 ]/g, "")
       .trim()
       .replace(/\s+/g, "-")
       .toUpperCase();
-    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-    const generatedId = `${slug}-${randomSuffix}`;
+    const generatedId = `${slug}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    // 2. Generate Kode Akses Statis
-    const firstWord = namaSekolah.split(" ")[0].toUpperCase().replace(/[^A-Z]/g, "");
-    const generatedKode = `${firstWord}${Math.floor(100 + Math.random() * 900)}`;
+    // 3. Generate Kode Akses Statis
+    const firstWord = namaSekolah
+      .split(" ")[0]
+      .toUpperCase()
+      .replace(/[^A-Z]/g, "");
+    const generatedKode = `${firstWord}${Math.floor(
+      100 + Math.random() * 900
+    )}`;
 
-    // 3. Simpan data Sekolah ke Database
+    // 4. Simpan data Sekolah ke Database
     const newSchool = new School({
       namaSekolah,
-      npsn,
+      npsn, // 🔥 SEKARANG NPSN AKAN MASUK KE DB
       kategoriSekolah,
       alamat,
       deskripsi,
       idSekolah: generatedId,
       kodeAksesStatis: generatedKode,
-      penyediaAntrian: false,
+      penyediaAntrian: false, // Tetap false agar masuk tab PENDING
       lokasiMaps: {
         lat: lat ? parseFloat(lat) : 0.0,
         lng: lng ? parseFloat(lng) : 0.0,
       },
-      createdBy: req.user._id,
-      status: "PENDING", 
+      createdBy: userObjectId, // 🔥 SEKARANG createdBy AKAN MASUK KE DB
+      status: "PENDING",
     });
 
     const savedSchool = await newSchool.save();
 
-    // 4. 🔥 PERBAIKAN VALIDASI: Sesuaikan dengan Schema SchoolMember.js
+    // 5. Buat record di SchoolMember (Status: pending)
     await SchoolMember.create({
-      school: savedSchool._id,   // Field 'school' sesuai schema
-      user: userObjectId,        // Field 'user' sesuai schema
-      status: "pending",        // Gunakan huruf kecil sesuai enum schema kamu
-      role: "admin",             // Gunakan huruf kecil sesuai enum schema kamu
-      adminRequestStatus: "NONE" // Default sesuai schema
+      school: savedSchool._id,
+      user: userObjectId,
+      status: "pending",
+      role: "admin",
+      adminRequestStatus: "NONE",
     });
 
-    // 5. Update data User agar langsung terhubung ke sekolah ini
+    // 6. Update User (Hanya idSekolah agar bisa cek status pending di Flutter)
     await User.findByIdAndUpdate(userObjectId, {
-      sekolah: savedSchool._id,
       idSekolah: savedSchool.idSekolah,
-      peran: "ADMIN"
     });
 
     res.status(201).json({
       success: true,
-      message: "Pendaftaran sekolah berhasil dan Anda telah menjadi Admin.",
+      message: "Pengajuan sekolah berhasil dikirim.",
       data: savedSchool,
     });
-
   } catch (error) {
     console.error("🚨 Request School Error:", error);
-    
+
     if (error.code === 11000) {
-      return res.status(400).json({ message: "ID Sekolah sudah terpakai, coba nama lain." });
+      return res
+        .status(400)
+        .json({ message: "NPSN atau Nama Sekolah sudah terdaftar." });
     }
-    
-    res.status(500).json({ 
-      message: "Gagal memproses pendaftaran sekolah", 
-      error: error.message 
+
+    res.status(500).json({
+      message: "Gagal memproses pendaftaran sekolah",
+      error: error.message,
     });
   }
 };
@@ -662,11 +669,15 @@ exports.getAdminStats = async (req, res) => {
   try {
     const schoolId = req.user.sekolah; // Pastikan fieldnya 'sekolah' sesuai req.user Anda
     if (!schoolId) {
-      return res.status(400).json({ message: "Admin tidak memiliki akses sekolah." });
+      return res
+        .status(400)
+        .json({ message: "Admin tidak memiliki akses sekolah." });
     }
 
     // Gunakan model QueueEntry (sesuaikan dengan import di atas)
-    const queues = await QueueEntry.find({ event: { $in: await Event.find({ sekolah: schoolId }).select('_id') } })
+    const queues = await QueueEntry.find({
+      event: { $in: await Event.find({ sekolah: schoolId }).select("_id") },
+    })
       .populate("pengguna", "namaPengguna fotoProfil")
       .populate("event", "namaKegiatan")
       .sort({ createdAt: 1 });
@@ -705,9 +716,9 @@ function formatObj(q) {
     _id: q._id,
     nomorAntrian: q.nomorAntrian,
     statusAntrian: q.statusAntrian,
-    user: { 
-      name: q.pengguna?.namaPengguna || "User", 
-      foto: q.pengguna?.fotoProfil 
+    user: {
+      name: q.pengguna?.namaPengguna || "User",
+      foto: q.pengguna?.fotoProfil,
     },
     event: { namaKegiatan: q.event?.namaKegiatan || "-" },
   };
