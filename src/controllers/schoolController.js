@@ -634,48 +634,102 @@ exports.requestNewSchool = async (req, res) => {
 // ==========================================
 exports.getAdminStats = async (req, res) => {
   try {
-    const schoolId = req.user.sekolah; // Pastikan fieldnya 'sekolah' sesuai req.user Anda
+    // 1. Validasi sekolah admin
+    const schoolId = req.user.sekolah;
     if (!schoolId) {
-      return res
-        .status(400)
-        .json({ message: "Admin tidak memiliki akses sekolah." });
+      return res.status(400).json({
+        status: "error",
+        message: "Admin tidak memiliki akses ke sekolah mana pun",
+      });
     }
 
-    // Gunakan model QueueEntry (sesuaikan dengan import di atas)
-    const queues = await QueueEntry.find({
-      event: { $in: await Event.find({ sekolah: schoolId }).select("_id") },
-    })
+    // 2. Ambil semua event milik sekolah
+    const events = await Event.find({ sekolah: schoolId }).select("_id");
+    if (!events.length) {
+      return res.status(200).json({
+        status: "success",
+        data: {
+          stats: { waiting: 0, serving: 0, completed: 0, total: 0 },
+          servingNow: null,
+          nextInLine: null,
+          waitingList: [],
+        },
+      });
+    }
+
+    const eventIds = events.map((e) => e._id);
+
+    // 3. Ambil semua antrian dari event sekolah
+    const queues = await QueueEntry.find({ event: { $in: eventIds } })
       .populate("pengguna", "namaPengguna fotoProfil")
       .populate("event", "namaKegiatan")
-      .sort({ createdAt: 1 });
+      .sort({ nomorAntrian: 1 });
 
-    let stats = { waiting: 0, serving: 0, completed: 0, total: queues.length };
+    // 4. Inisialisasi response
+    const stats = {
+      waiting: 0,
+      serving: 0,
+      completed: 0,
+      total: queues.length,
+    };
+
     let servingNow = null;
     let nextInLine = null;
-    let waitingList = [];
+    const waitingList = [];
 
-    for (let q of queues) {
-      if (q.statusAntrian === "MENUNGGU") {
+    // 5. Helper formatter (AMAN)
+    const formatQueue = (q) => ({
+      _id: q._id,
+      nomorAntrian: q.nomorAntrian,
+      statusAntrian: q.statusAntrian,
+      user: q.pengguna
+        ? {
+            nama: q.pengguna.namaPengguna,
+            foto: q.pengguna.fotoProfil,
+          }
+        : null,
+      event: q.event
+        ? {
+            namaKegiatan: q.event.namaKegiatan,
+          }
+        : null,
+    });
+
+    // 6. Hitung statistik & susun data
+    for (const q of queues) {
+      const formatted = formatQueue(q);
+
+      if (["MENUNGGU", "REQ_TUNDA"].includes(q.statusAntrian)) {
         stats.waiting++;
-        waitingList.push(formatObj(q));
-        if (!nextInLine) nextInLine = formatObj(q);
-      } else if (q.statusAntrian === "DIPANGGIL") {
+        waitingList.push(formatted);
+        if (!nextInLine) nextInLine = formatted;
+      } else if (["DIPANGGIL", "DILAYANI"].includes(q.statusAntrian)) {
         stats.serving++;
-        servingNow = formatObj(q);
+        servingNow = formatted;
       } else if (q.statusAntrian === "SELESAI") {
         stats.completed++;
       }
     }
 
+    // 7. Kirim response
     res.status(200).json({
       status: "success",
-      data: { stats, servingNow, nextInLine, waitingList },
+      data: {
+        stats,
+        servingNow,
+        nextInLine,
+        waitingList,
+      },
     });
   } catch (error) {
-    console.error("🚨 Admin Stats Error:", error);
-    res.status(500).json({ message: "Gagal mengambil data dashboard" });
+    console.error("🚨 getAdminStats ERROR:", error);
+    res.status(500).json({
+      status: "error",
+      message: "Gagal mengambil data dashboard admin",
+    });
   }
 };
+
 
 // Helper function
 function formatObj(q) {
