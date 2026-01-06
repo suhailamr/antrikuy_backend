@@ -33,51 +33,67 @@ exports.getAllSchools = async (req, res) => {
 
 // src/controllers/superAdminController.js
 
+// src/controllers/superAdminController.js
+
 exports.getPendingSchools = async (req, res) => {
   try {
-    // 1. Ambil sekolah yang penyediaAntrian-nya false
+    // 1. Ambil sekolah yang statusnya belum di-approve (penyediaAntrian: false)
     const pendingSchools = await School.find({ penyediaAntrian: false });
 
+    // 2. Gunakan map untuk memproses data pengaju
     const data = await Promise.all(
       pendingSchools.map(async (school) => {
         try {
-          let user = null;
+          // Inisialisasi pengaju default
+          let userPengaju = { namaPengguna: "User Tidak Ditemukan", _id: null };
 
-          // Cek jika createdBy ada dan merupakan ID yang valid
-          if (
-            school.createdBy &&
-            mongoose.Types.ObjectId.isValid(school.createdBy)
-          ) {
-            user = await User.findById(school.createdBy);
+          if (school.createdBy) {
+            // Cari user berdasarkan ID yang ada di field createdBy
+            const user = await User.findById(school.createdBy).select(
+              "namaPengguna email fotoProfil"
+            );
+            if (user) {
+              userPengaju = user;
+            }
+          } else {
+            // Fallback: Jika createdBy kosong, coba cari user yang terhubung ke ID sekolah ini
+            const fallbackUser = await User.findOne({
+              sekolah: school._id,
+            }).select("namaPengguna");
+            if (fallbackUser) {
+              userPengaju = fallbackUser;
+            }
           }
 
-          // Fallback: Cari berdasarkan idSekolah jika createdBy tidak ditemukan
-          if (!user) {
-            user = await User.findOne({
-              idSekolah: school.idSekolah,
-              peran: { $in: ["PENGGUNA", "ADMIN"] },
-            });
-          }
-
-          // Jika tetap tidak ada user, kirim data sekolah dengan user dummy agar tidak error di Flutter
           return {
-            school,
-            user: user || { namaPengguna: "User Tidak Ditemukan", _id: null },
+            school: school,
+            user: userPengaju,
           };
-        } catch (innerErr) {
-          console.error(`🚨 Error processing school ${school._id}:`, innerErr);
-          return null;
+        } catch (innerError) {
+          // Jika satu item gagal (misal ID tidak valid), return data minimal agar tidak crash
+          console.error(
+            `🚨 Gagal memproses data sekolah ${school._id}:`,
+            innerError
+          );
+          return {
+            school: school,
+            user: { namaPengguna: "Error Data User", _id: null },
+          };
         }
       })
     );
 
-    const result = data.filter((item) => item !== null);
-    res.status(200).json({ status: "success", data: result });
+    // Kirim hasil ke Flutter
+    res.status(200).json({
+      status: "success",
+      data: data,
+    });
   } catch (err) {
-    console.error("🚨 Error getPendingSchools:", err);
-    res
-      .status(500)
-      .json({ message: "Server gagal memproses daftar pendaftaran" });
+    // Ini catch utama jika query ke database School sendiri yang gagal
+    console.error("🚨 Error Utama getPendingSchools:", err);
+    res.status(500).json({
+      message: "Server gagal memproses daftar pendaftaran",
+    });
   }
 };
 
