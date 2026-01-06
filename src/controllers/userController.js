@@ -252,7 +252,13 @@ exports.requestAdminAccess = async (req, res) => {
     // ==========================================
 
     // Ambil data user terbaru untuk dapat token
-    const userFresh = await User.findById(userReq._id);
+    const userFresh = await User.findOne({
+      firebaseUid: req.user.uid, // 🔥 KUNCI SAMA
+    });
+
+    const userFresh = await User.findOne({
+      firebaseUid: req.user.uid, // 🔥 KUNCI SAMA
+    });
 
     if (userFresh && userFresh.fcmToken) {
       console.log(
@@ -335,7 +341,7 @@ exports.updateFcmToken = async (req, res) => {
 
     // req.user sudah valid karena pakai middleware protect
     const updateResult = await User.updateOne(
-      { _id: req.user._id },
+      { firebaseUid: req.user.uid },
       { $set: { fcmToken } }
     );
 
