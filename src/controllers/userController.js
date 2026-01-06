@@ -256,10 +256,6 @@ exports.requestAdminAccess = async (req, res) => {
       firebaseUid: req.user.uid, // 🔥 KUNCI SAMA
     });
 
-    const userFresh = await User.findOne({
-      firebaseUid: req.user.uid, // 🔥 KUNCI SAMA
-    });
-
     if (userFresh && userFresh.fcmToken) {
       console.log(
         `[DEBUG FCM] Token ditemukan: ${userFresh.fcmToken.substring(0, 10)}...`
