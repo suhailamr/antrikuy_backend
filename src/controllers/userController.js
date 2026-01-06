@@ -252,8 +252,11 @@ exports.requestAdminAccess = async (req, res) => {
     // ==========================================
 
     // Ambil data user terbaru untuk dapat token
-    const userFresh = await User.findOne({
-      firebaseUid: req.user.uid, // 🔥 KUNCI SAMA
+    const userFresh = await resolveMongoUser(req);
+
+    console.log("[DEBUG ADMIN-REQ] Mongo user:", {
+      id: userFresh?._id,
+      hasToken: !!userFresh?.fcmToken,
     });
 
     if (userFresh && userFresh.fcmToken) {
@@ -315,50 +318,33 @@ exports.updateMedia = async (req, res) => {
 // 🔥 UPDATE: Penambahan Debug Lengkap untuk FCM
 exports.updateFcmToken = async (req, res) => {
   try {
+    console.log("[DEBUG FCM] Raw req.user:", req.user);
+
+    const mongoUser = await resolveMongoUser(req);
+
+    if (!mongoUser) {
+      console.error("[DEBUG FCM] ❌ Mongo user TIDAK ditemukan");
+      return res.status(404).json({ message: "User tidak ditemukan" });
+    }
+
+    console.log("[DEBUG FCM] Mongo user ditemukan:", {
+      _id: mongoUser._id,
+      firebaseUid: mongoUser.firebaseUid,
+    });
+
     const { fcmToken } = req.body;
-
-    console.log(
-      `[DEBUG FCM] Request masuk untuk update token. UserID: ${req.user?._id}`
-    );
-
     if (!fcmToken) {
-      console.warn(
-        `[DEBUG FCM] ⚠️ Gagal: Token tidak ditemukan dalam body request.`
-      );
-      return res.status(400).json({
-        message: "FCM token wajib dikirim",
-      });
+      return res.status(400).json({ message: "FCM token wajib dikirim" });
     }
 
-    // Log token (dipotong agar tidak memenuhi terminal)
-    const tokenPreview =
-      fcmToken.length > 20 ? fcmToken.substring(0, 20) + "..." : fcmToken;
-    console.log(`[DEBUG FCM] Token diterima: ${tokenPreview}`);
+    mongoUser.fcmToken = fcmToken;
+    await mongoUser.save();
 
-    // req.user sudah valid karena pakai middleware protect
-    const updateResult = await User.updateOne(
-      { firebaseUid: req.user.uid },
-      { $set: { fcmToken } }
-    );
+    console.log("[DEBUG FCM] ✅ Token tersimpan ke Mongo user");
 
-    console.log(`[DEBUG FCM] Hasil MongoDB Update:`, updateResult);
-
-    if (updateResult.nModified === 0) {
-      console.log(
-        `[DEBUG FCM] ℹ️ Token mungkin sama dengan sebelumnya, tidak ada perubahan data.`
-      );
-    } else {
-      console.log(`[DEBUG FCM] ✅ Token berhasil diperbarui di Database.`);
-    }
-
-    res.status(200).json({
-      success: true,
-      message: "FCM token berhasil disimpan",
-    });
-  } catch (error) {
-    console.error("🚨 Update FCM Error:", error);
-    res.status(500).json({
-      message: "Gagal menyimpan FCM token",
-    });
+    res.json({ success: true });
+  } catch (err) {
+    console.error("[DEBUG FCM] ERROR:", err);
+    res.status(500).json({ message: "Gagal update FCM" });
   }
 };
