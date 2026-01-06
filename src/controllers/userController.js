@@ -33,32 +33,31 @@ exports.getMe = async (req, res) => {
     const userReq = getUserFromRequest(req, res);
     if (!userReq) return;
 
+    // Ambil data user terbaru dari DB untuk memastikan populate berjalan
     const user = await User.findById(userReq._id).populate("sekolah");
 
     if (!user) {
       return res.status(404).json({ message: "User tidak ditemukan" });
     }
 
+    // 2. 🔥 Cari Data Member
     const member = await SchoolMember.findOne({
       user: user._id,
-      status: "approved", // Cukup approved lowercase jika data konsisten
-    });
+      status: { $regex: /^approved$/i }, // Regex agar case-insensitive
+    }).populate("school", "namaSekolah");
 
-    const safeUser = filterUserResponse(user);
+    // 3. Siapkan respon data user
+    const userData = filterUserResponse(user);
 
-    const finalUserData = {
-      ...safeUser,
-      sekolah: user.sekolah || null,
-      // Ambil status request dari member, default NONE
-      adminRequestStatus: member ? member.adminRequestStatus : "NONE",
-      // Ambil role spesifik di sekolah (misal: "admin", "student")
-      schoolRole: member ? member.role : "NONE",
-    };
+    // 4. 🔥 Inject field
+    userData.adminRequestStatus = member ? member.adminRequestStatus : "NONE";
+    if (member) {
+      userData.schoolRole = member.role;
+    }
 
-    // 5. Kirim Response (Gunakan key 'data' agar konsisten)
     res.json({
       status: "success",
-      data: finalUserData,
+      user: userData,
     });
   } catch (err) {
     console.error("🚨 Get Profile Error:", err);
