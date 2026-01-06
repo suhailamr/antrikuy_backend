@@ -201,34 +201,23 @@ exports.requestAdminAccess = async (req, res) => {
     }
 
     console.log(
-      `[DEBUG ADMIN-REQ] Memulai Request Admin dari User: ${userReq.namaPengguna} (${userReq._id})`
+      `[DEBUG ADMIN-REQ] Memulai Request Admin dari User: ${userReq.namaPengguna}`
     );
 
-    // Cek apakah user ini punya FCM Token (untuk debug notifikasi balasan nanti)
-    const currentUserCheck = await User.findById(userReq._id).select(
-      "fcmToken"
-    );
-    console.log(
-      `[DEBUG ADMIN-REQ] Status FCM Token User: ${
-        currentUserCheck?.fcmToken ? "✅ ADA" : "❌ TIDAK ADA"
-      }`
-    );
-
-    // 3. Cari Member Sekolah
+    // 2. Cari Member Sekolah
     const member = await SchoolMember.findOne({
       user: userReq._id,
       status: { $regex: /^approved$/i },
     }).populate("school", "namaSekolah");
 
     if (!member) {
-      console.warn(`[DEBUG ADMIN-REQ] Gagal: User belum jadi member sekolah`);
       return res.status(400).json({
         message:
           "Anda belum bergabung ke sekolah manapun (atau status keanggotaan belum disetujui).",
       });
     }
 
-    // 4. Cek role eksisting
+    // 3. Cek Role Existing
     const existingRoles = [
       "admin",
       "teacher",
@@ -242,7 +231,6 @@ exports.requestAdminAccess = async (req, res) => {
       });
     }
 
-    // 5. Cek request pending
     if (member.adminRequestStatus === "PENDING") {
       return res.status(400).json({
         message:
@@ -250,22 +238,56 @@ exports.requestAdminAccess = async (req, res) => {
       });
     }
 
-    // 6. Update Data Member
+    // 4. Update Data Member ke Database
     member.nip = nip;
     member.adminRequestStatus = "PENDING";
     member.adminRequestDate = new Date();
 
     await member.save();
 
-    console.log(
-      `[DEBUG ADMIN-REQ] [SUCCESS] Status tersimpan 'PENDING' untuk ${userReq.namaPengguna}. Menunggu sistem notifikasi memproses...`
-    );
+    console.log(`[DEBUG] Status saved di DB. Mencoba kirim notifikasi...`);
+
+    // ==========================================
+    // 🔥 BAGIAN KIRIM NOTIFIKASI (BARU)
+    // ==========================================
+
+    // Ambil data user terbaru untuk dapat token
+    const userFresh = await User.findById(userReq._id);
+
+    if (userFresh && userFresh.fcmToken) {
+      console.log(
+        `[DEBUG FCM] Token ditemukan: ${userFresh.fcmToken.substring(0, 10)}...`
+      );
+
+      const message = {
+        notification: {
+          title: "Pengajuan Terkirim! 📝",
+          body: `Permintaan akses Admin di ${member.school?.namaSekolah} sedang diproses.`,
+        },
+        data: {
+          type: "ADMIN_REQUEST", // Untuk navigasi di Flutter nanti
+          status: "PENDING",
+          click_action: "FLUTTER_NOTIFICATION_CLICK",
+        },
+        token: userFresh.fcmToken,
+      };
+
+      try {
+        const response = await admin.messaging().send(message);
+        console.log(
+          `[SUCCESS] Notifikasi berhasil dikirim ke FCM! ID: ${response}`
+        );
+      } catch (fcmError) {
+        console.error(`[ERROR] Gagal kirim ke Firebase:`, fcmError.message);
+        // Kita tidak throw error agar user tetap mendapat response sukses (karena data DB sudah masuk)
+      }
+    } else {
+      console.log(`[WARNING] User tidak punya Token FCM. Notifikasi dilewati.`);
+    }
 
     return res.status(200).json({
       success: true,
-      message: `Pengajuan Admin untuk sekolah ${
-        member.school?.namaSekolah || "ini"
-      } berhasil dikirim.`,
+      message: `Pengajuan Admin berhasil dikirim.`,
     });
   } catch (error) {
     console.error("🚨 Error requestAdminAccess:", error);

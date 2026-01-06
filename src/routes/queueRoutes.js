@@ -90,6 +90,8 @@ router.get("/:queueId", protect, async (req, res, next) => {
     "admin",
     "event",
     "validate-qr",
+    "check-event",
+    "export"
   ];
   if (reserved.includes(req.params.queueId)) return next();
   await queueController.getQueueDetail(req, res); //
