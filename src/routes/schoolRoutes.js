@@ -12,7 +12,7 @@ router.post('/request', protect, schoolController.requestNewSchool);
 
 // --- DASHBOARD ADMIN SEKOLAH ---
 router.get('/dashboard-admin', protect, schoolController.getAdminStats);
-router.post("/leave", protect, schoolController.leaveSchool);
+router.post("/leave", protect, authorize("ADMIN"), schoolController.leaveSchool);
 router.post("/:schoolId/join", protect, schoolController.joinSchool);
 router.post("/:schoolId/cancel-request", protect, schoolController.cancelJoinRequest);
 
