@@ -577,7 +577,7 @@ exports.approveAdminRequest = async (req, res) => {
 // ==========================================
 exports.requestNewSchool = async (req, res) => {
   try {
-    const { namaSekolah, kategoriSekolah, alamat, deskripsi, lat, lng } = req.body;
+    const { namaSekolah, npsn, kategoriSekolah, alamat, deskripsi, lat, lng } = req.body;
     
     // 🔥 Pastikan mengambil ID MongoDB User (_id), bukan UID Firebase
     const userObjectId = req.user._id; 
