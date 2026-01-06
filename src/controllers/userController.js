@@ -44,7 +44,7 @@ exports.getMe = async (req, res) => {
     const member = await SchoolMember.findOne({
       user: user._id,
       status: { $regex: /^approved$/i }, // Regex agar case-insensitive
-    })
+    });
 
     // 3. Siapkan respon data user
     const userData = filterUserResponse(user);
@@ -87,7 +87,6 @@ exports.updateMe = async (req, res) => {
     }
 
     // Update Biodata Service
-    // Pastikan service ini tidak menggunakan .uid jika req.user adalah doc MongoDB
     const user = await updateCurrentUserBiodata(userReq, req.body);
 
     // Fetch ulang status admin request biar data fresh
@@ -144,10 +143,6 @@ exports.updatePassword = async (req, res) => {
 
 exports.registerPengguna = async (req, res) => {
   try {
-    // Note: Middleware 'protect' di endpoint register MUNGKIN
-    // mengembalikan decoded token (belum ada user di DB).
-    // Jadi di sini kita pakai req.user apa adanya (biasanya decodedToken).
-
     const { password, ...biodata } = req.body;
 
     const user = await findOrCreateUserFromFirebase(req.user, {
@@ -176,7 +171,6 @@ exports.updateContact = async (req, res) => {
       return res.status(400).json({ message: "Data kontak kosong" });
     }
 
-    // Gunakan _id langsung untuk update
     await User.updateOne(
       { _id: userReq._id },
       {
@@ -207,24 +201,34 @@ exports.requestAdminAccess = async (req, res) => {
     }
 
     console.log(
-      `[DEBUG] Request Admin dari User: ${userReq.namaPengguna} (${userReq._id})`
+      `[DEBUG ADMIN-REQ] Memulai Request Admin dari User: ${userReq.namaPengguna} (${userReq._id})`
     );
 
-    // 3. Cari Member Sekolah (Pakai user._id langsung)
+    // Cek apakah user ini punya FCM Token (untuk debug notifikasi balasan nanti)
+    const currentUserCheck = await User.findById(userReq._id).select(
+      "fcmToken"
+    );
+    console.log(
+      `[DEBUG ADMIN-REQ] Status FCM Token User: ${
+        currentUserCheck?.fcmToken ? "✅ ADA" : "❌ TIDAK ADA"
+      }`
+    );
+
+    // 3. Cari Member Sekolah
     const member = await SchoolMember.findOne({
       user: userReq._id,
       status: { $regex: /^approved$/i },
     }).populate("school", "namaSekolah");
 
-    // Jika member tidak ditemukan
     if (!member) {
+      console.warn(`[DEBUG ADMIN-REQ] Gagal: User belum jadi member sekolah`);
       return res.status(400).json({
         message:
           "Anda belum bergabung ke sekolah manapun (atau status keanggotaan belum disetujui).",
       });
     }
 
-    // 4. Cek apakah sudah jadi admin/guru
+    // 4. Cek role eksisting
     const existingRoles = [
       "admin",
       "teacher",
@@ -238,7 +242,7 @@ exports.requestAdminAccess = async (req, res) => {
       });
     }
 
-    // 5. Cek apakah sudah pernah request
+    // 5. Cek request pending
     if (member.adminRequestStatus === "PENDING") {
       return res.status(400).json({
         message:
@@ -254,7 +258,7 @@ exports.requestAdminAccess = async (req, res) => {
     await member.save();
 
     console.log(
-      `[SUCCESS] Pengajuan Admin untuk ${userReq.namaPengguna} di sekolah ${member.school?.namaSekolah}`
+      `[DEBUG ADMIN-REQ] [SUCCESS] Status tersimpan 'PENDING' untuk ${userReq.namaPengguna}. Menunggu sistem notifikasi memproses...`
     );
 
     return res.status(200).json({
@@ -284,21 +288,44 @@ exports.updateMedia = async (req, res) => {
   }
 };
 
+// 🔥 UPDATE: Penambahan Debug Lengkap untuk FCM
 exports.updateFcmToken = async (req, res) => {
   try {
     const { fcmToken } = req.body;
 
+    console.log(
+      `[DEBUG FCM] Request masuk untuk update token. UserID: ${req.user?._id}`
+    );
+
     if (!fcmToken) {
+      console.warn(
+        `[DEBUG FCM] ⚠️ Gagal: Token tidak ditemukan dalam body request.`
+      );
       return res.status(400).json({
         message: "FCM token wajib dikirim",
       });
     }
 
+    // Log token (dipotong agar tidak memenuhi terminal)
+    const tokenPreview =
+      fcmToken.length > 20 ? fcmToken.substring(0, 20) + "..." : fcmToken;
+    console.log(`[DEBUG FCM] Token diterima: ${tokenPreview}`);
+
     // req.user sudah valid karena pakai middleware protect
-    await User.updateOne(
+    const updateResult = await User.updateOne(
       { _id: req.user._id },
       { $set: { fcmToken } }
     );
+
+    console.log(`[DEBUG FCM] Hasil MongoDB Update:`, updateResult);
+
+    if (updateResult.nModified === 0) {
+      console.log(
+        `[DEBUG FCM] ℹ️ Token mungkin sama dengan sebelumnya, tidak ada perubahan data.`
+      );
+    } else {
+      console.log(`[DEBUG FCM] ✅ Token berhasil diperbarui di Database.`);
+    }
 
     res.status(200).json({
       success: true,

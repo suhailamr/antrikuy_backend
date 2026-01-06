@@ -1,31 +1,48 @@
 const admin = require("firebase-admin");
 
-// Kirim ke satu user spesifik berdasarkan Token FCM
+// Kirim ke satu user (FCM TOKEN)
 exports.sendPushNotification = async (fcmToken, title, body, payload = {}) => {
-  if (!fcmToken) return;
+  console.log("📨 [FCM DEBUG] sendPushNotification dipanggil", {
+    hasToken: !!fcmToken,
+    tokenPreview: fcmToken ? fcmToken.slice(0, 20) : null,
+    title,
+    body,
+    payload,
+  });
+
+  if (!fcmToken) {
+    console.warn("⚠️ [FCM DEBUG] Token kosong, notif dibatalkan");
+    return;
+  }
+
   const message = {
     notification: { title, body },
-    data: payload, // Tambahkan data tambahan (misal ID antrian)
+    data: Object.fromEntries(
+      Object.entries(payload).map(([k, v]) => [k, String(v)])
+    ),
     token: fcmToken,
   };
+
   try {
-    await admin.messaging().send(message);
-    console.log("✅ Notifikasi terkirim");
-  } catch (error) {
-    console.error("❌ Gagal kirim notif:", error);
+    const res = await admin.messaging().send(message);
+    console.log("✅ [FCM DEBUG] Firebase menerima notif", res);
+  } catch (err) {
+    console.error("❌ [FCM ERROR]", err.code, err.message);
   }
 };
 
-// Kirim ke banyak user sekaligus berdasarkan TOPIK
+// Kirim ke TOPIC
 exports.sendTopicNotification = async (topic, title, body, payload = {}) => {
-  const message = {
-    notification: { title, body },
-    data: payload,
-    topic: topic,
-  };
+  console.log("📣 [FCM DEBUG] sendTopicNotification", { topic, title });
+
   try {
-    await admin.messaging().send(message);
-  } catch (error) {
-    console.error("❌ Gagal kirim topik:", error);
+    await admin.messaging().send({
+      notification: { title, body },
+      data: payload,
+      topic,
+    });
+    console.log("✅ [FCM DEBUG] Topic notif terkirim");
+  } catch (err) {
+    console.error("❌ [FCM TOPIC ERROR]", err.code, err.message);
   }
 };
