@@ -6,6 +6,13 @@ const schoolSchema = new mongoose.Schema({
     required: true,
     trim: true,
   },
+  // 🔥 TAMBAHKAN NPSN DISINI
+  npsn: {
+    type: String,
+    required: true,
+    unique: true, // NPSN tidak boleh kembar antar sekolah
+    trim: true,
+  },
   alamat: {
     type: String,
     trim: true,
@@ -18,7 +25,7 @@ const schoolSchema = new mongoose.Schema({
   },
   penyediaAntrian: {
     type: Boolean,
-    default: false,
+    default: false, // Default false agar masuk ke tab PENDING di Super Admin
   },
   dibuatPada: {
     type: Date,
@@ -34,21 +41,25 @@ const schoolSchema = new mongoose.Schema({
     type: String,
     trim: true,
   },
-
   kategoriSekolah: {
     type: String,
     enum: ["SD", "SMP", "SMA", "SMK"],
     required: true,
   },
-
   fotoUrl: {
     type: String,
     default: null,
   },
-
   lokasiMaps: {
     lat: { type: Number },
     lng: { type: Number },
+  },
+  // 🔥 TAMBAHKAN createdBy DISINI (SANGAT PENTING)
+  // Ini untuk menyimpan ID user pengaju agar Super Admin tahu siapa yang daftar
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User", // Mengacu pada model User
+    required: true,
   },
 });
 
