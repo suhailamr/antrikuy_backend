@@ -10,11 +10,11 @@ router.post("/register-pengguna", userController.registerPengguna);
 router.patch("/me/contact", protect, userController.updateContact);
 router.patch("/me/media", protect, userController.updateMedia);
 router.put("/me/password", protect, userController.updatePassword);
-router.post(
-  '/request-admin', 
-  protect, 
-  userController.requestAdminAccess
+router.post("/request-admin", protect, userController.requestAdminAccess);
+router.put(
+  "/users/update-fcm",
+  protect,
+  userController.updateFcmToken
 );
-router.put("/users/update-fcm", protect, updateFcmToken);
 
 module.exports = router;
