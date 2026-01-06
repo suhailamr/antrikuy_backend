@@ -218,8 +218,13 @@ exports.approveDissolution = async (req, res) => {
           sekolah: null,
           idSekolah: null,
           peran: "PENGGUNA",
-          nis: null,
           adminRequestStatus: "NONE",
+        },
+        $unset: {
+          nis: "", // ✅ HARUS UNSET
+          kelas: "",
+          jurusan: "",
+          kategoriSekolah: "",
         },
       }
     );
@@ -276,7 +281,7 @@ exports.rejectDissolution = async (req, res) => {
 
 // 8. Utility: Get School by ID & Members
 exports.getSchoolById = async (req, res) => {
-   console.log("🚨 MASUK getSchoolById, schoolId =", req.params.schoolId);
+  console.log("🚨 MASUK getSchoolById, schoolId =", req.params.schoolId);
   try {
     const school = await School.findById(req.params.schoolId);
     if (!school)
