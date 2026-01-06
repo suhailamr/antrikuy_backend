@@ -14,6 +14,11 @@ const UserSchema = new mongoose.Schema(
       unique: true,
     },
 
+    fcmToken: {
+      type: String,
+      default: null,
+    },
+
     metodeLoginAwal: {
       type: String,
       enum: ["EMAIL", "PHONE"],
