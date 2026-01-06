@@ -117,8 +117,6 @@ exports.joinQueue = async (req, res) => {
       return res.status(400).json({ message: "ID Layanan tidak valid." });
     }
 
-    // 🔥 FIX: Ambil user langsung dari req.user (Hasil Middleware)
-    // Jangan cari ulang pake uid karena pasti error!
     const user = req.user;
     if (!user || !user._id) {
       return res.status(401).json({ message: "User tidak valid." });
@@ -135,7 +133,37 @@ exports.joinQueue = async (req, res) => {
       return res.status(404).json({ message: "Layanan tidak ditemukan" });
     }
 
-    // 2. 🔥 VALIDASI STATUS
+    // ============================================================
+    // 🛡️ SECURITY PATCH: CEK VALIDASI SEKOLAH (ANTI-CURANG)
+    // ============================================================
+
+    // 1. Cek apakah user punya sekolah (menangani kasus user baru di-KICK)
+    if (!user.sekolah) {
+      // ROLLBACK SLOT
+      await Event.findByIdAndUpdate(eventId, {
+        $inc: { lastNumberIssued: -1, slotsTaken: -1 },
+      });
+      return res
+        .status(403)
+        .json({ message: "Gagal: Anda tidak terdaftar di sekolah manapun." });
+    }
+
+    // 2. Cek apakah sekolah user SAMA dengan sekolah penyelenggara event
+    // Gunakan .toString() untuk membandingkan ObjectId dengan aman
+    if (user.sekolah.toString() !== updatedEvent.sekolah.toString()) {
+      // ROLLBACK SLOT
+      await Event.findByIdAndUpdate(eventId, {
+        $inc: { lastNumberIssued: -1, slotsTaken: -1 },
+      });
+      return res
+        .status(403)
+        .json({
+          message: "Gagal: Anda bukan anggota sekolah penyelenggara ini.",
+        });
+    }
+    // ============================================================
+
+    // 2. 🔥 VALIDASI STATUS EVENT (Lanjutan)
     const status = updatedEvent.dynamicStatus;
     const isOverbooked =
       updatedEvent.kapasitas &&
@@ -158,7 +186,7 @@ exports.joinQueue = async (req, res) => {
 
     const existing = await QueueEntry.findOne({
       event: eventId,
-      pengguna: user._id, // ✅ Pakai user._id langsung
+      pengguna: user._id,
       batch: batchAktif,
       statusAntrian: {
         $in: ["MENUNGGU", "DIPANGGIL", "REQ_TUNDA", "DILAYANI"],
@@ -178,16 +206,17 @@ exports.joinQueue = async (req, res) => {
     // 4. Buat Tiket Baru
     const newEntry = new QueueEntry({
       event: eventId,
-      pengguna: user._id, // ✅ Pakai user._id
+      pengguna: user._id,
       nomorAntrian: updatedEvent.lastNumberIssued,
       batch: batchAktif,
       statusAntrian: "MENUNGGU",
     });
 
     newEntry.qrExpiresAt = new Date(Date.now() + 5 * 60000);
+    // Pastikan SECRET_KEY sudah di-import/defined
     newEntry.qrToken = jwt.sign(
       { qid: newEntry._id, eid: eventId },
-      SECRET_KEY,
+      process.env.JWT_SECRET || "rahasia_negara", // Pastikan pakai env yang benar
       { expiresIn: "5m" }
     );
 
@@ -1248,6 +1277,7 @@ exports.cancelAllQueuesByUser = async (req, res) => {
   const { userId } = req.body;
 
   try {
+    
     if (!userId) {
       return res.status(400).json({ message: "User ID wajib dikirim." });
     }

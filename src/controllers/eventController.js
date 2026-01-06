@@ -1,7 +1,11 @@
 const Event = require("../models/Events");
 const QueueEntry = require("../models/QueueEntry");
 const User = require("../models/User");
-const { sendPushNotification, sendTopicNotification } = require("../utils/notificationHelper");
+const {
+  sendPushNotification,
+  sendTopicNotification,
+} = require("../utils/notificationHelper");
+const user = await getUserFromToken(req.user);
 
 const getUserFromToken = async (decodedToken) => {
   // 🔥 SOLUSI: Cari berdasarkan UID atau Email agar data manual terbaca
@@ -213,6 +217,18 @@ exports.updateEvent = async (req, res) => {
     if (statusKegiatan === "SELESAI") {
       req.body.isLocked = true;
 
+      if (user.peran !== "SUPER_ADMIN") {
+        // Super admin boleh bebas
+        if (
+          !user.sekolah ||
+          event.sekolah.toString() !== user.sekolah._id.toString()
+        ) {
+          return res.status(403).json({
+            message: "Anda tidak memiliki akses ke event sekolah lain.",
+          });
+        }
+      }
+
       // Pindahkan sisa antrean ke status TERLEWAT (Bumihangus)
       await QueueEntry.updateMany(
         {
@@ -260,6 +276,20 @@ exports.deleteEvent = async (req, res) => {
     const eventDeleted = await Event.findByIdAndDelete(req.params.id);
     if (!eventDeleted)
       return res.status(404).json({ message: "Event tidak ditemukan" });
+
+    if (user.peran !== "SUPER_ADMIN") {
+      // Super admin boleh bebas
+      if (
+        !user.sekolah ||
+        event.sekolah.toString() !== user.sekolah._id.toString()
+      ) {
+        return res
+          .status(403)
+          .json({
+            message: "Anda tidak memiliki akses ke event sekolah lain.",
+          });
+      }
+    }
 
     await QueueEntry.deleteMany({ event: req.params.id });
     res.json({
