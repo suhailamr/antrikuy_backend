@@ -344,60 +344,64 @@ exports.getMySchoolStatus = async (req, res) => {
   try {
     const currentUser = await getUserFromToken(req);
 
-    // 🔥 LOGIKA KHUSUS SUPER ADMIN
-    if (currentUser.peran === "SUPER_ADMIN") {
+    // 1. Bypass untuk Super Admin
+    if (currentUser.peran === "SUPER_ADMIN" || currentUser.peran === "PENELITI") {
       return res.json({
         status: "approved",
-        currentSchool: {
-          namaSekolah: "Sistem Global",
-          idSekolah: "SUPER-ADMIN",
-          _id: "global", // Berikan ID dummy agar tidak crash saat akses detail
-        },
+        currentSchool: { namaSekolah: "Sistem Antrikuy", idSekolah: "SUPER-ADMIN", _id: "global" },
         pendingSchool: null,
         userKategoriSekolah: "GLOBAL",
       });
     }
 
-    // --- Logika asli untuk user biasa tetap di bawah ---
+    // 2. Cari semua record keanggotaan user
     const memberships = await SchoolMember.find({ user: currentUser._id })
       .populate("school")
       .sort({ updatedAt: -1 });
 
-    const active = memberships.find((m) => m.status === "approved");
-    const pending = memberships.find((m) => m.status === "pending");
+    // Cek status secara aman
+    const active = memberships.find((m) => m.status === "approved" && m.school);
+    const pending = memberships.find((m) => m.status === "pending" && m.school);
 
-    if (
-      active &&
-      (!currentUser.sekolah ||
-        currentUser.sekolah.toString() !== active.school._id.toString())
-    ) {
-      await User.updateOne(
-        { _id: currentUser._id },
-        {
-          $set: {
-            sekolah: active.school._id,
-            idSekolah: active.school.idSekolah,
-          },
+    // 3. Logic Sinkronisasi (Hanya jalan jika ada sekolah yang benar-benar aktif)
+    if (active && active.school) {
+        // Karena kita sudah pastikan active.school tidak null, aman akses ._id
+        const schoolIdStr = active.school._id.toString();
+        const userSchoolStr = currentUser.sekolah ? currentUser.sekolah.toString() : null;
+
+        if (userSchoolStr !== schoolIdStr) {
+            await User.updateOne(
+                { _id: currentUser._id },
+                { $set: { sekolah: active.school._id, idSekolah: active.school.idSekolah } }
+            );
         }
-      );
     }
 
-    const DissolveRequest = require("../models/DissolveRequest");
-    const isDissolving = await DissolveRequest.findOne({
-      school: currentUser.sekolah,
-      status: "PENDING",
-    });
+    // 4. Cek pembubaran (Hanya jika user punya sekolah aktif di profilnya)
+    let isDissolving = false;
+    if (currentUser.sekolah) {
+       try {
+         const DissolveRequest = require("../models/DissolveRequest");
+         const dr = await DissolveRequest.findOne({ 
+           school: currentUser.sekolah, 
+           status: "PENDING" 
+         });
+         isDissolving = !!dr;
+       } catch (e) { /* ignore */ }
+    }
 
+    // 5. Kembalikan Respon (Aman dari null pointer)
     res.json({
-      status: active ? "approved" : pending ? "pending" : "none",
+      status: active ? "approved" : (pending ? "pending" : "none"),
       currentSchool: active ? active.school : null,
       pendingSchool: pending ? pending.school : null,
-      isDissolving: !!isDissolving, // 🔥 Kirim flag ini ke Flutter
+      isDissolving: isDissolving,
       userKategoriSekolah: currentUser.kategoriSekolah || null,
     });
+
   } catch (error) {
     console.error("🚨 My School Status Error:", error);
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: "Gagal memproses status sekolah" });
   }
 };
 
