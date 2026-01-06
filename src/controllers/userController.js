@@ -6,6 +6,26 @@ const {
   findOrCreateUserFromFirebase,
 } = require("../services/authService");
 
+const resolveMongoUser = async (req) => {
+  // Jika middleware protect sudah inject Mongo user
+  if (req.user && req.user._id) {
+    return await User.findById(req.user._id);
+  }
+
+  // Jika req.user dari Firebase decoded token
+  if (req.user && req.user.uid) {
+    return await User.findOne({ firebaseUid: req.user.uid });
+  }
+
+  // Fallback by email (aman untuk kasus kamu)
+  if (req.user && req.user.email) {
+    return await User.findOne({ email: req.user.email });
+  }
+
+  return null;
+};
+
+
 const filterUserResponse = (user) => {
   if (!user) return null;
   const userObj = user.toObject ? user.toObject() : user;
