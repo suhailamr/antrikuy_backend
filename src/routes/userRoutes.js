@@ -15,5 +15,6 @@ router.post(
   protect, 
   userController.requestAdminAccess
 );
+router.put("/users/update-fcm", protect, updateFcmToken);
 
 module.exports = router;

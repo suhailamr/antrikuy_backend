@@ -1,6 +1,7 @@
 const authService = require("../services/authService");
 const User = require("../models/User");
 const SchoolMember = require("../models/SchoolMember");
+const User = require("../models/User");
 const {
   updateCurrentUserBiodata,
   findOrCreateUserFromFirebase,
@@ -281,5 +282,33 @@ exports.updateMedia = async (req, res) => {
   } catch (error) {
     console.error("🚨 Update Media Error:", error);
     res.status(500).json({ message: "Gagal memperbarui media" });
+  }
+};
+
+exports.updateFcmToken = async (req, res) => {
+  try {
+    const { fcmToken } = req.body;
+
+    if (!fcmToken) {
+      return res.status(400).json({
+        message: "FCM token wajib dikirim",
+      });
+    }
+
+    // req.user sudah valid karena pakai middleware protect
+    await User.updateOne(
+      { _id: req.user._id },
+      { $set: { fcmToken } }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "FCM token berhasil disimpan",
+    });
+  } catch (error) {
+    console.error("🚨 Update FCM Error:", error);
+    res.status(500).json({
+      message: "Gagal menyimpan FCM token",
+    });
   }
 };
