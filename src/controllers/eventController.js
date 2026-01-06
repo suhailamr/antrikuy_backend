@@ -5,28 +5,25 @@ const {
   sendPushNotification,
   sendTopicNotification,
 } = require("../utils/notificationHelper");
-const user = await getUserFromToken(req.user);
 
+// Helper: Cari user dari Token Firebase (UID/Email)
 const getUserFromToken = async (decodedToken) => {
-  // 🔥 SOLUSI: Cari berdasarkan UID atau Email agar data manual terbaca
   const user = await User.findOne({
     $or: [{ firebaseUid: decodedToken.uid }, { email: decodedToken.email }],
   }).populate("sekolah", "namaSekolah idSekolah");
 
   if (!user) {
-    // Log untuk debug di console node.js kamu
-    console.log("UID dari Token:", decodedToken.uid);
-    console.log("Email dari Token:", decodedToken.email);
-    throw new Error("User tidak ditemukan di database meskipun token valid");
+    console.log("DEBUG AUTH: UID tidak ditemukan:", decodedToken.uid);
+    throw new Error("User tidak ditemukan di database.");
   }
   return user;
 };
 
+// 1. CREATE EVENT
 exports.createEvent = async (req, res) => {
   try {
     const currentUser = await getUserFromToken(req.user);
 
-    // 1. AMBIL SEMUA DATA SEKALIGUS (Menghindari error redeclare 'kapasitas')
     const {
       idKegiatan,
       namaKegiatan,
@@ -42,8 +39,7 @@ exports.createEvent = async (req, res) => {
       thumbnailUrl,
     } = req.body;
 
-    // 2. SIKAP TEGAS: VALIDASI ANGKA (Kapasitas, Avg, Grace)
-    // Memastikan tidak ada string/huruf yang lolos ke database
+    // VALIDASI INPUT ANGKA
     const numericFields = { kapasitas, avgServiceMinutes, gracePeriodMinutes };
     for (const [key, value] of Object.entries(numericFields)) {
       if (value !== undefined && isNaN(parseInt(value))) {
@@ -53,7 +49,7 @@ exports.createEvent = async (req, res) => {
       }
     }
 
-    // 3. VALIDASI OTORITAS & SYARAT UTAMA
+    // VALIDASI OTORITAS
     if (currentUser.peran !== "ADMIN") {
       return res
         .status(403)
@@ -72,7 +68,6 @@ exports.createEvent = async (req, res) => {
         .json({ message: "idKegiatan dan namaKegiatan wajib diisi" });
     }
 
-    // 4. KONSTRUKSI DATA (Filter & Casting)
     const eventData = {
       idKegiatan,
       namaKegiatan,
@@ -81,14 +76,12 @@ exports.createEvent = async (req, res) => {
       thumbnailUrl,
       sekolah: currentUser.sekolah._id || currentUser.sekolah,
       kategori: kategori || "LAINNYA",
-      // Pastikan casting ke Number agar tidak tersimpan sebagai String di MongoDB
       avgServiceMinutes: parseInt(avgServiceMinutes) || 5,
       gracePeriodMinutes: parseInt(gracePeriodMinutes) || 5,
       statusKegiatan: statusKegiatan || "TERBUKA",
       kapasitas: kapasitas ? parseInt(kapasitas) : null,
     };
 
-    // 5. PENANGANAN BUG JAM (Validasi Objek Date)
     if (waktuMulai) {
       const dateStart = new Date(waktuMulai);
       if (isNaN(dateStart.getTime()))
@@ -103,12 +96,10 @@ exports.createEvent = async (req, res) => {
       eventData.waktuSelesai = dateEnd;
     }
 
-    // 6. SIMPAN KE DATABASE
     const eventBaru = await Event.create(eventData);
     res.status(201).json(eventBaru);
   } catch (error) {
     console.error("🚨 Create Event Error:", error);
-    // Handle Duplicate ID (idKegiatan)
     const status = error.code === 11000 ? 400 : 500;
     const message =
       error.code === 11000
@@ -118,6 +109,7 @@ exports.createEvent = async (req, res) => {
   }
 };
 
+// 2. GET ALL EVENTS
 exports.getAllEvents = async (req, res) => {
   try {
     const currentUser = await getUserFromToken(req.user);
@@ -193,43 +185,50 @@ exports.getAllEvents = async (req, res) => {
   }
 };
 
+// 3. UPDATE EVENT
 exports.updateEvent = async (req, res) => {
   try {
     const eventId = req.params.id;
-    const event = await Event.findById(eventId);
     const { statusKegiatan } = req.body;
 
-    // 1. 🔥 LOGIKA RE-OPEN TOTAL: Jika Admin menyalakan kembali (TERBUKA)
+    const event = await Event.findById(eventId);
+    if (!event) {
+      return res.status(404).json({ message: "Event tidak ditemukan" });
+    }
+
+    // 🔥 SECURITY: Validasi Kepemilikan Sekolah
+    const user = await getUserFromToken(req.user);
+    if (user.peran !== "SUPER_ADMIN") {
+      if (
+        !user.sekolah ||
+        event.sekolah.toString() !== user.sekolah._id.toString()
+      ) {
+        return res
+          .status(403)
+          .json({
+            message:
+              "DILARANG: Anda tidak memiliki akses ke event sekolah lain.",
+          });
+      }
+    }
+
+    // Logic Re-Open
     if (statusKegiatan === "TERBUKA") {
       req.body.waktuMulai = null;
       req.body.waktuSelesai = null;
       req.body.isLocked = false;
     }
 
-    // 2. Logika Countdown Manual (DITUTUP)
+    // Logic Countdown Manual
     if (statusKegiatan === "DITUTUP" && event.statusKegiatan !== "DITUTUP") {
       const now = new Date();
       req.body.waktuSelesai = new Date(now.getTime() + 15 * 60000);
       req.body.isLocked = true;
     }
 
-    // 3. Logika Selesai
+    // Logic Selesai
     if (statusKegiatan === "SELESAI") {
       req.body.isLocked = true;
-
-      if (user.peran !== "SUPER_ADMIN") {
-        // Super admin boleh bebas
-        if (
-          !user.sekolah ||
-          event.sekolah.toString() !== user.sekolah._id.toString()
-        ) {
-          return res.status(403).json({
-            message: "Anda tidak memiliki akses ke event sekolah lain.",
-          });
-        }
-      }
-
-      // Pindahkan sisa antrean ke status TERLEWAT (Bumihangus)
       await QueueEntry.updateMany(
         {
           event: eventId,
@@ -267,18 +266,22 @@ exports.updateEvent = async (req, res) => {
   }
 };
 
+// 4. DELETE EVENT
 exports.deleteEvent = async (req, res) => {
   try {
-    const currentUser = await getUserFromToken(req.user);
-    if (currentUser.peran !== "ADMIN")
-      return res.status(403).json({ message: "Akses ditolak" });
+    const eventId = req.params.id;
+    const event = await Event.findById(eventId);
 
-    const eventDeleted = await Event.findByIdAndDelete(req.params.id);
-    if (!eventDeleted)
+    if (!event)
       return res.status(404).json({ message: "Event tidak ditemukan" });
 
+    // 🔥 SECURITY: Validasi Kepemilikan Sekolah
+    const user = await getUserFromToken(req.user);
+
     if (user.peran !== "SUPER_ADMIN") {
-      // Super admin boleh bebas
+      if (user.peran !== "ADMIN")
+        return res.status(403).json({ message: "Akses ditolak" });
+
       if (
         !user.sekolah ||
         event.sekolah.toString() !== user.sekolah._id.toString()
@@ -286,12 +289,15 @@ exports.deleteEvent = async (req, res) => {
         return res
           .status(403)
           .json({
-            message: "Anda tidak memiliki akses ke event sekolah lain.",
+            message:
+              "DILARANG: Anda tidak berhak menghapus event sekolah lain.",
           });
       }
     }
 
-    await QueueEntry.deleteMany({ event: req.params.id });
+    await Event.deleteOne({ _id: eventId });
+    await QueueEntry.deleteMany({ event: eventId });
+
     res.json({
       message: "Kegiatan dan semua antrean terkait berhasil dihapus",
     });
@@ -301,11 +307,25 @@ exports.deleteEvent = async (req, res) => {
   }
 };
 
+// 5. TOGGLE EVENT LOCK
 exports.toggleEventLock = async (req, res) => {
   try {
     const event = await Event.findById(req.params.eventId);
     if (!event)
       return res.status(404).json({ message: "Layanan tidak ditemukan" });
+
+    // 🔥 SECURITY: Validasi Kepemilikan Sekolah
+    const user = await getUserFromToken(req.user);
+    if (user.peran !== "SUPER_ADMIN") {
+      if (
+        !user.sekolah ||
+        event.sekolah.toString() !== user.sekolah._id.toString()
+      ) {
+        return res
+          .status(403)
+          .json({ message: "DILARANG: Bukan sekolah Anda." });
+      }
+    }
 
     event.isLocked = req.body.isLocked;
     await event.save();
