@@ -1,6 +1,8 @@
 const authService = require("../services/authService");
 const User = require("../models/User");
 const SchoolMember = require("../models/SchoolMember");
+const admin = require("../firebase/firebaseAdmin");
+
 const {
   updateCurrentUserBiodata,
   findOrCreateUserFromFirebase,
