@@ -31,28 +31,43 @@ exports.getAllSchools = async (req, res) => {
   }
 };
 
-// Ambil pengajuan PENDING (Pendaftaran Sekolah Baru)
-// 2. Ambil pengajuan PENDING (Pendaftaran Sekolah Baru)
+// src/controllers/superAdminController.js
+
 exports.getPendingSchools = async (req, res) => {
   try {
-    // 🔥 FILTER: Hanya ambil yang penyediaAntrian-nya FALSE (Masih pengajuan)
+    // 1. Ambil sekolah yang penyediaAntrian-nya false
     const pendingSchools = await School.find({ penyediaAntrian: false });
 
     const data = await Promise.all(
       pendingSchools.map(async (school) => {
-        // Cari user yang merupakan pembuat (createdBy) sekolah tersebut
-        const user = await User.findById(school.createdBy);
+        try {
+          let user = null;
 
-        // Fallback jika createdBy kosong, cari berdasarkan idSekolah (logika lama Anda)
-        const fallbackUser =
-          user ||
-          (await User.findOne({
-            idSekolah: school.idSekolah,
-            peran: "PENGGUNA",
-          }));
+          // Cek jika createdBy ada dan merupakan ID yang valid
+          if (
+            school.createdBy &&
+            mongoose.Types.ObjectId.isValid(school.createdBy)
+          ) {
+            user = await User.findById(school.createdBy);
+          }
 
-        if (!fallbackUser) return null;
-        return { school, user: fallbackUser };
+          // Fallback: Cari berdasarkan idSekolah jika createdBy tidak ditemukan
+          if (!user) {
+            user = await User.findOne({
+              idSekolah: school.idSekolah,
+              peran: { $in: ["PENGGUNA", "ADMIN"] },
+            });
+          }
+
+          // Jika tetap tidak ada user, kirim data sekolah dengan user dummy agar tidak error di Flutter
+          return {
+            school,
+            user: user || { namaPengguna: "User Tidak Ditemukan", _id: null },
+          };
+        } catch (innerErr) {
+          console.error(`🚨 Error processing school ${school._id}:`, innerErr);
+          return null;
+        }
       })
     );
 

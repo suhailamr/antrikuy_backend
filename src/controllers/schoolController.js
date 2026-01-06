@@ -613,7 +613,7 @@ exports.requestNewSchool = async (req, res) => {
         lat: lat ? parseFloat(lat) : 0.0,
         lng: lng ? parseFloat(lng) : 0.0,
       },
-      createdBy: userObjectId,
+      createdBy: req.user._id,
       status: "PENDING", 
     });
 
