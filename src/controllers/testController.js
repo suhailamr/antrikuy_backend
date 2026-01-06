@@ -3,6 +3,7 @@
 // Pastikan path ini mengarah ke file service yang kamu edit di langkah 1
 // Jika filenya bernama authService.js, ganti jadi require("../services/authService")
 const userService = require("../services/authService"); 
+const { sendPushNotification } = require("../utils/notificationHelper");
 
 exports.getTestToken = async (req, res) => {
   try {
@@ -31,5 +32,34 @@ exports.getTestToken = async (req, res) => {
     });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+exports.testFcm = async (req, res) => {
+  try {
+    // ❗ boleh tetap dibatasi
+    if (process.env.NODE_ENV === "production") {
+      return res.status(403).json({ message: "Akses ditolak di production" });
+    }
+
+    const { fcmToken } = req.body;
+
+    // Token boleh dummy, tujuan cuma ngetes eksekusi fungsi
+    await sendPushNotification(
+      fcmToken || "DUMMY_TOKEN",
+      "TEST FCM",
+      "Ini uji notifikasi backend",
+      { type: "TEST_ONLY" }
+    );
+
+    res.json({
+      success: true,
+      message: "Fungsi FCM berhasil dipanggil",
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
   }
 };

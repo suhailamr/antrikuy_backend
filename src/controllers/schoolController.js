@@ -64,7 +64,9 @@ exports.leaveSchool = async (req, res) => {
           idSekolah: null,
           sekolah: null,
           peran: "PENGGUNA",
-          nis: null, // 🔥 RESET NIS JADI NULL
+        },
+        $unset: {
+          nis: "", // 👈 INI KUNCINYA. Menghapus field NIS, bukan mengisinya dengan null.
         },
       }
     );
@@ -501,7 +503,9 @@ exports.updateMemberStatus = async (req, res) => {
           sekolah: null,
           idSekolah: null,
           peran: "PENGGUNA",
-          nis: null, // 🔥 RESET NIS JADI NULL
+        },
+        $unset: {
+          nis: "", // Menghapus field NIS agar tidak dianggap duplikat oleh MongoDB
         },
       });
     }
