@@ -276,6 +276,7 @@ exports.rejectDissolution = async (req, res) => {
 
 // 8. Utility: Get School by ID & Members
 exports.getSchoolById = async (req, res) => {
+   console.log("🚨 MASUK getSchoolById, schoolId =", req.params.schoolId);
   try {
     const school = await School.findById(req.params.schoolId);
     if (!school)
