@@ -67,18 +67,13 @@ const UserSchema = new mongoose.Schema(
       default: "PENGGUNA",
     },
 
-    // 🔥🔥🔥 PERBAIKAN DI SINI 🔥🔥🔥
-    // Semua field siswa dibuat TIDAK WAJIB (required: false) di database
-    // Validasi kelengkapan data akan dilakukan manual di authService saat update biodata
-
     nis: {
       type: String,
       unique: true,
-      sparse: true, // Agar null tidak dianggap duplikat
-      required: false, // 🔥 JANGAN WAJIBKAN SAAT REGISTER
+      sparse: true,
+      required: false,
       validate: {
         validator: function (v) {
-          // Jika kosong, loloskan validasi regex
           if (!v) return true;
           return /^\d{10,16}$/.test(v);
         },
@@ -100,22 +95,22 @@ const UserSchema = new mongoose.Schema(
     kategoriSekolah: {
       type: String,
       enum: ["SD", "SMP", "SMA", "SMK", "UMUM"],
-      required: false, // 🔥 JANGAN WAJIBKAN SAAT REGISTER
+      required: false,
     },
 
     kelas: {
       type: String,
-      required: false, // 🔥 JANGAN WAJIBKAN SAAT REGISTER
+      required: false,
     },
 
     jurusan: {
       type: String,
-      required: false, // 🔥 JANGAN WAJIBKAN SAAT REGISTER
+      required: false,
     },
 
     namaOrangTua: {
       type: String,
-      required: false, // 🔥 JANGAN WAJIBKAN SAAT REGISTER
+      required: false,
     },
 
     diwakiliOrangTua: {

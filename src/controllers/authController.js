@@ -1,7 +1,7 @@
 const authService = require("../services/authService");
 const User = require("../models/User");
 const Event = require("../models/Events");
-const admin = require("../firebase/firebaseAdmin"); // Ensure this path is correct
+const admin = require("../firebase/firebaseAdmin");
 
 const filterUserResponse = (user) => {
   if (!user) return null;
@@ -43,7 +43,6 @@ exports.exchangeToken = async (req, res) => {
 };
 
 exports.getMe = (req, res) => {
-  // 🔥 FIX: Gunakan firebaseUid karena req.user adalah objek MongoDB
   res.json({
     message: "Token valid",
     uid: req.user.firebaseUid,
@@ -52,10 +51,8 @@ exports.getMe = (req, res) => {
   });
 };
 
-// 🔥 UPDATED: Manual Token Verification (No Middleware)
 exports.registerPengguna = async (req, res) => {
   try {
-    // 1. Manually extract token from header
     let token;
     if (
       req.headers.authorization &&
@@ -70,13 +67,10 @@ exports.registerPengguna = async (req, res) => {
       );
     }
 
-    // 2. Verify token directly with Firebase
     const decodedToken = await admin.auth().verifyIdToken(token);
 
-    // 3. Extract body data
     const { idSekolah, password, ...biodata } = req.body;
 
-    // 4. Create User using decoded token
     const user = await authService.findOrCreateUserFromFirebase(decodedToken, {
       peran: "PENGGUNA",
       idSekolah,
@@ -90,7 +84,7 @@ exports.registerPengguna = async (req, res) => {
     });
   } catch (error) {
     console.error("🚨 Register Error:", error);
-    // Return specific error message for debugging
+
     res.status(500).json({
       message: error.message || "Gagal registrasi",
     });
@@ -99,8 +93,6 @@ exports.registerPengguna = async (req, res) => {
 
 exports.registerAdmin = async (req, res) => {
   try {
-    // Note: If registerAdmin uses 'protect' middleware, req.user is fine.
-    // If not, replicate the manual verification logic above.
     const user = await authService.findOrCreateUserFromFirebase(req.user, {
       peran: "ADMIN",
       idSekolah: req.body.idSekolah,
@@ -145,7 +137,6 @@ exports.updatePassword = async (req, res) => {
         .json({ message: "Password lama dan baru wajib diisi" });
     }
 
-    // 🔥 FIX: Gunakan firebaseUid dari DB
     await authService.syncUserPasswordToMongo(
       req.user.firebaseUid,
       currentPassword,
@@ -172,7 +163,6 @@ exports.resetPassword = async (req, res) => {
 
 exports.requestEmailChange = async (req, res) => {
   try {
-    // 🔥 FIX: req.user.uid -> req.user.firebaseUid
     await authService.sendOtpForEmailChange(
       req.user.firebaseUid,
       req.body.newEmail
@@ -185,7 +175,6 @@ exports.requestEmailChange = async (req, res) => {
 
 exports.verifyEmailChange = async (req, res) => {
   try {
-    // 🔥 FIX: req.user.uid -> req.user.firebaseUid
     await authService.verifyAndChangeEmail(
       req.user.firebaseUid,
       req.body.newEmail,
@@ -199,7 +188,6 @@ exports.verifyEmailChange = async (req, res) => {
 
 exports.requestPhoneChange = async (req, res) => {
   try {
-    // 🔥 FIX: req.user.uid -> req.user.firebaseUid
     await authService.sendOtpForPhoneChange(
       req.user.firebaseUid,
       req.body.newPhone
@@ -212,7 +200,6 @@ exports.requestPhoneChange = async (req, res) => {
 
 exports.verifyPhoneChange = async (req, res) => {
   try {
-    // 🔥 FIX: req.user.uid -> req.user.firebaseUid
     await authService.verifyAndChangePhone(
       req.user.firebaseUid,
       req.body.newPhone,

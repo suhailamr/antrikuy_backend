@@ -9,17 +9,14 @@ const {
 } = require("../services/authService");
 
 const resolveMongoUser = async (req) => {
-  // Jika middleware protect sudah inject Mongo user
   if (req.user && req.user._id) {
     return await User.findById(req.user._id);
   }
 
-  // Jika req.user dari Firebase decoded token
   if (req.user && req.user.uid) {
     return await User.findOne({ firebaseUid: req.user.uid });
   }
 
-  // Fallback by email (aman untuk kasus kamu)
   if (req.user && req.user.email) {
     return await User.findOne({ email: req.user.email });
   }
@@ -34,7 +31,6 @@ const filterUserResponse = (user) => {
   return safeUser;
 };
 
-// Helper untuk memastikan user object valid dari middleware
 const getUserFromRequest = (req, res) => {
   const user = req.user;
   if (!user || !user._id) {
@@ -48,29 +44,24 @@ const getUserFromRequest = (req, res) => {
   return user;
 };
 
-// 🔥 UPDATE: getMe yang sudah diperbaiki
 exports.getMe = async (req, res) => {
   try {
     const userReq = getUserFromRequest(req, res);
     if (!userReq) return;
 
-    // Ambil data user terbaru dari DB untuk memastikan populate berjalan
     const user = await User.findById(userReq._id).populate("sekolah");
 
     if (!user) {
       return res.status(404).json({ message: "User tidak ditemukan" });
     }
 
-    // 2. 🔥 Cari Data Member
     const member = await SchoolMember.findOne({
       user: user._id,
-      status: { $regex: /^approved$/i }, // Regex agar case-insensitive
+      status: { $regex: /^approved$/i },
     });
 
-    // 3. Siapkan respon data user
     const userData = filterUserResponse(user);
 
-    // 4. 🔥 Inject field
     userData.adminRequestStatus = member ? member.adminRequestStatus : "NONE";
     if (member) {
       userData.schoolRole = member.role;
@@ -93,7 +84,6 @@ exports.updateMe = async (req, res) => {
 
     const { nis } = req.body;
 
-    // Validasi NIS
     if (nis) {
       if (!/^\d+$/.test(nis)) {
         return res
@@ -107,10 +97,8 @@ exports.updateMe = async (req, res) => {
       }
     }
 
-    // Update Biodata Service
     const user = await updateCurrentUserBiodata(userReq, req.body);
 
-    // Fetch ulang status admin request biar data fresh
     const member = await SchoolMember.findOne({
       user: user._id,
       status: { $regex: /^approved$/i },
@@ -216,7 +204,6 @@ exports.requestAdminAccess = async (req, res) => {
 
     const { nip } = req.body;
 
-    // 1. Validasi Input
     if (!nip) {
       return res.status(400).json({ message: "NUPTK/NIP wajib diisi." });
     }
@@ -225,7 +212,6 @@ exports.requestAdminAccess = async (req, res) => {
       `[DEBUG ADMIN-REQ] Memulai Request Admin dari User: ${userReq.namaPengguna}`
     );
 
-    // 2. Cari Member Sekolah
     const member = await SchoolMember.findOne({
       user: userReq._id,
       status: { $regex: /^approved$/i },
@@ -238,7 +224,6 @@ exports.requestAdminAccess = async (req, res) => {
       });
     }
 
-    // 3. Cek Role Existing
     const existingRoles = [
       "admin",
       "teacher",
@@ -259,7 +244,6 @@ exports.requestAdminAccess = async (req, res) => {
       });
     }
 
-    // 4. Update Data Member ke Database
     member.nip = nip;
     member.adminRequestStatus = "PENDING";
     member.adminRequestDate = new Date();
@@ -268,11 +252,6 @@ exports.requestAdminAccess = async (req, res) => {
 
     console.log(`[DEBUG] Status saved di DB. Mencoba kirim notifikasi...`);
 
-    // ==========================================
-    // 🔥 BAGIAN KIRIM NOTIFIKASI (BARU)
-    // ==========================================
-
-    // Ambil data user terbaru untuk dapat token
     const userFresh = await resolveMongoUser(req);
 
     console.log("[DEBUG ADMIN-REQ] Mongo user:", {
@@ -302,7 +281,6 @@ exports.requestAdminAccess = async (req, res) => {
         );
       } catch (fcmError) {
         console.error(`[ERROR] Gagal kirim ke Firebase:`, fcmError.message);
-        // Kita tidak throw error agar user tetap mendapat response sukses (karena data DB sudah masuk)
       }
     } else {
       console.log(`[WARNING] User tidak punya Token FCM. Notifikasi dilewati.`);
@@ -333,7 +311,6 @@ exports.updateMedia = async (req, res) => {
   }
 };
 
-// 🔥 UPDATE: Penambahan Debug Lengkap untuk FCM
 exports.updateFcmToken = async (req, res) => {
   try {
     console.log("[DEBUG FCM] Raw req.user:", req.user);

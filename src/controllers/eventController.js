@@ -1,12 +1,7 @@
 const Event = require("../models/Events");
 const QueueEntry = require("../models/QueueEntry");
 const User = require("../models/User");
-const {
-  sendPushNotification,
-  sendTopicNotification,
-} = require("../utils/notificationHelper");
 
-// Helper: Cari user dari Token Firebase (UID/Email)
 const getUserFromToken = async (decodedToken) => {
   const user = await User.findOne({
     $or: [{ firebaseUid: decodedToken.uid }, { email: decodedToken.email }],
@@ -19,7 +14,6 @@ const getUserFromToken = async (decodedToken) => {
   return user;
 };
 
-// 1. CREATE EVENT
 exports.createEvent = async (req, res) => {
   try {
     const currentUser = await getUserFromToken(req.user);
@@ -39,7 +33,6 @@ exports.createEvent = async (req, res) => {
       thumbnailUrl,
     } = req.body;
 
-    // VALIDASI INPUT ANGKA
     const numericFields = { kapasitas, avgServiceMinutes, gracePeriodMinutes };
     for (const [key, value] of Object.entries(numericFields)) {
       if (value !== undefined && isNaN(parseInt(value))) {
@@ -49,7 +42,6 @@ exports.createEvent = async (req, res) => {
       }
     }
 
-    // VALIDASI OTORITAS
     if (currentUser.peran !== "ADMIN") {
       return res
         .status(403)
@@ -109,7 +101,6 @@ exports.createEvent = async (req, res) => {
   }
 };
 
-// 2. GET ALL EVENTS
 exports.getAllEvents = async (req, res) => {
   try {
     const currentUser = await getUserFromToken(req.user);
@@ -185,7 +176,6 @@ exports.getAllEvents = async (req, res) => {
   }
 };
 
-// 3. UPDATE EVENT
 exports.updateEvent = async (req, res) => {
   try {
     const eventId = req.params.id;
@@ -196,37 +186,30 @@ exports.updateEvent = async (req, res) => {
       return res.status(404).json({ message: "Event tidak ditemukan" });
     }
 
-    // 🔥 SECURITY: Validasi Kepemilikan Sekolah
     const user = await getUserFromToken(req.user);
     if (user.peran !== "SUPER_ADMIN") {
       if (
         !user.sekolah ||
         event.sekolah.toString() !== user.sekolah._id.toString()
       ) {
-        return res
-          .status(403)
-          .json({
-            message:
-              "DILARANG: Anda tidak memiliki akses ke event sekolah lain.",
-          });
+        return res.status(403).json({
+          message: "DILARANG: Anda tidak memiliki akses ke event sekolah lain.",
+        });
       }
     }
 
-    // Logic Re-Open
     if (statusKegiatan === "TERBUKA") {
       req.body.waktuMulai = null;
       req.body.waktuSelesai = null;
       req.body.isLocked = false;
     }
 
-    // Logic Countdown Manual
     if (statusKegiatan === "DITUTUP" && event.statusKegiatan !== "DITUTUP") {
       const now = new Date();
       req.body.waktuSelesai = new Date(now.getTime() + 15 * 60000);
       req.body.isLocked = true;
     }
 
-    // Logic Selesai
     if (statusKegiatan === "SELESAI") {
       req.body.isLocked = true;
       await QueueEntry.updateMany(
@@ -266,7 +249,6 @@ exports.updateEvent = async (req, res) => {
   }
 };
 
-// 4. DELETE EVENT
 exports.deleteEvent = async (req, res) => {
   try {
     const eventId = req.params.id;
@@ -275,7 +257,6 @@ exports.deleteEvent = async (req, res) => {
     if (!event)
       return res.status(404).json({ message: "Event tidak ditemukan" });
 
-    // 🔥 SECURITY: Validasi Kepemilikan Sekolah
     const user = await getUserFromToken(req.user);
 
     if (user.peran !== "SUPER_ADMIN") {
@@ -286,12 +267,9 @@ exports.deleteEvent = async (req, res) => {
         !user.sekolah ||
         event.sekolah.toString() !== user.sekolah._id.toString()
       ) {
-        return res
-          .status(403)
-          .json({
-            message:
-              "DILARANG: Anda tidak berhak menghapus event sekolah lain.",
-          });
+        return res.status(403).json({
+          message: "DILARANG: Anda tidak berhak menghapus event sekolah lain.",
+        });
       }
     }
 
@@ -307,14 +285,12 @@ exports.deleteEvent = async (req, res) => {
   }
 };
 
-// 5. TOGGLE EVENT LOCK
 exports.toggleEventLock = async (req, res) => {
   try {
     const event = await Event.findById(req.params.eventId);
     if (!event)
       return res.status(404).json({ message: "Layanan tidak ditemukan" });
 
-    // 🔥 SECURITY: Validasi Kepemilikan Sekolah
     const user = await getUserFromToken(req.user);
     if (user.peran !== "SUPER_ADMIN") {
       if (

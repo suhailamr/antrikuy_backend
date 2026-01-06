@@ -14,7 +14,7 @@ const queueRoutes = require("./routes/queueRoutes");
 const authRoutes = require("./routes/authRoutes");
 const testRoutes = require("./routes/testRoutes");
 
-// 🔥🔥🔥 TAMBAHAN: Jangan lupa import ini! 🔥🔥🔥
+
 const superAdminRoutes = require("./routes/superAdminRoutes");
 
 const app = express();
@@ -73,8 +73,7 @@ mongoose.connection.on("connected", () => {
   console.log("⏰ Auto-Skip Scheduler Activated (Running every 10 seconds)");
 
   app.listen(PORT, HOST, () => {
-    console.log(`🚀 Server backend berjalan di http://localhost:${PORT}`);
+    console.log(`🚀 Server backend berjalan di http://${HOST}:${PORT}`);
     console.log(`🌐 Akses Eksternal/Emulator di ${HOST}:${PORT}`);
-
   });
 });

@@ -10,24 +10,19 @@ client.authentications["api-key"].apiKey = process.env.BREVO_API_KEY;
 
 const transactionalApi = new SibApiV3Sdk.TransactionalEmailsApi();
 
-// 🔥 PERBAIKAN: Terima parameter 'user' untuk cek peran
 function validateBiodataRequired(user, body = {}) {
-  // Jika Super Admin atau Peneliti, SKIP validasi wajib
   if (user.peran === "SUPER_ADMIN" || user.peran === "PENELITI") {
-    return; // Bebas update apa saja tanpa syarat wajib
+    return;
   }
 
-  // Validasi khusus untuk User Biasa (Siswa/Admin Sekolah)
   if (body.namaPengguna !== undefined && body.namaPengguna.trim() === "") {
     throw new Error("Nama wajib diisi");
   }
 
-  // Tanggal Lahir boleh skip jika tidak sedang diupdate (undefined), tapi jika diupdate tidak boleh kosong
   if (body.tanggalLahir !== undefined && !body.tanggalLahir) {
     throw new Error("Tanggal lahir wajib diisi");
   }
 
-  // Kategori Sekolah wajib bagi user biasa
   if (body.kategoriSekolah !== undefined && !body.kategoriSekolah) {
     throw new Error("Kategori sekolah wajib diisi");
   }
@@ -41,14 +36,11 @@ function validateBiodataRequired(user, body = {}) {
   }
 }
 
-// ... (fungsi applyBiodata tetap sama) ...
-
 async function updateCurrentUserBiodata(userDoc, biodata = {}) {
   if (!userDoc || !userDoc.save) {
     throw new Error("Objek user tidak valid. Pastikan login berhasil.");
   }
 
-  // 🔥 PERBAIKAN: Kirim 'userDoc' ke validator
   validateBiodataRequired(userDoc, biodata);
 
   applyBiodata(userDoc, biodata);
@@ -101,7 +93,6 @@ async function sendEmailOtp(targetEmail) {
   const user = await User.findOne({ email: targetEmail });
   if (!user) throw new Error("User dengan email ini tidak ditemukan.");
 
-  // 🔥 KIRIM EMAIL VIA BREVO API
   await transactionalApi.sendTransacEmail({
     sender: {
       email: process.env.EMAIL_SENDER,
@@ -112,13 +103,11 @@ async function sendEmailOtp(targetEmail) {
     htmlContent: `<p>Kode OTP Anda: <b>${otp}</b></p>`,
   });
 
-  // ✅ SIMPAN OTP SETELAH EMAIL BERHASIL
   await User.updateOne(
     { _id: user._id },
     { $set: { otpCode: otp, otpExpiry } }
   );
 }
-
 
 async function verifyOtpCode(target, otpCode) {
   let user = await User.findOne({ $or: [{ email: target }, { noHp: target }] });

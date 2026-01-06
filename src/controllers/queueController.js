@@ -5,10 +5,6 @@ const Event = require("../models/Events");
 const jwt = require("jsonwebtoken");
 require("dotenv").config();
 const ExcelJS = require("exceljs");
-const {
-  sendPushNotification,
-  sendTopicNotification,
-} = require("../utils/notificationHelper");
 
 const SECRET_KEY = process.env.JWT_SECRET;
 
@@ -20,8 +16,6 @@ const formatWaitTime = (totalMinutes) => {
   return mins > 0 ? `${hours} j ${mins} m` : `${hours} j`;
 };
 
-// Lokasi: src/controllers/queueController.js
-
 const processAutoActions = async (eventId) => {
   try {
     const event = await Event.findById(eventId);
@@ -29,7 +23,6 @@ const processAutoActions = async (eventId) => {
 
     const now = new Date();
 
-    // --- BAGIAN 1: LOGIKA AUTO-SKIP (TETAP DIPERTAHANKAN) ---
     const expiredCall = await QueueEntry.findOne({
       event: eventId,
       statusAntrian: "DIPANGGIL",
@@ -53,30 +46,18 @@ const processAutoActions = async (eventId) => {
         nextQueue.waktuPanggil = now;
         nextQueue.waktuKadaluarsa = new Date(now.getTime() + duration * 60000);
         await nextQueue.save();
-        if (nextQueue.pengguna && nextQueue.pengguna.fcmToken) {
-          sendPushNotification(
-            nextQueue.pengguna.fcmToken,
-            "Giliran Anda (Auto)! 📢",
-            `Antrian sebelumnya dilewati. Nomor #${nextQueue.nomorAntrian} silakan merapat.`,
-            { type: "AUTO_CALL", eventId: eventId }
-          );
-        }
       }
     }
 
-    // --- BAGIAN 2: LOGIKA TERMINASI SESI (DENGAN PERBAIKAN) ---
     const isTimeOver = event.waktuSelesai && now > new Date(event.waktuSelesai);
     const isManuallyFinished = event.statusKegiatan === "SELESAI";
 
     if (isTimeOver || isManuallyFinished) {
-      // 1. Sinkronisasi Status: Paksa DITUTUP menjadi SELESAI jika waktu habis
       if (isTimeOver && event.statusKegiatan !== "SELESAI") {
         event.statusKegiatan = "SELESAI";
         event.isLocked = true;
-        // Jangan di-save di sini dulu, kita save sekaligus di akhir
       }
 
-      // 2. 🔥 FIX ANTREAN HANTU: Tambahkan "DILAYANI" ke daftar yang akan dihapus
       const activeStatuses = ["MENUNGGU", "REQ_TUNDA", "DIPANGGIL", "DILAYANI"];
 
       const toArchiveCount = await QueueEntry.countDocuments({
@@ -99,7 +80,7 @@ const processAutoActions = async (eventId) => {
         );
       }
 
-      await event.save(); // Simpan perubahan status SELESAI dan slotsTaken: 0
+      await event.save();
       console.log(
         `✅ Sesi ${event.namaKegiatan} dibersihkan. Kapasitas direset ke 0.`
       );
@@ -122,7 +103,6 @@ exports.joinQueue = async (req, res) => {
       return res.status(401).json({ message: "User tidak valid." });
     }
 
-    // 1. 🔥 ATOMIC UPDATE: Amankan slot dulu
     const updatedEvent = await Event.findByIdAndUpdate(
       eventId,
       { $inc: { lastNumberIssued: 1, slotsTaken: 1 } },
@@ -133,13 +113,7 @@ exports.joinQueue = async (req, res) => {
       return res.status(404).json({ message: "Layanan tidak ditemukan" });
     }
 
-    // ============================================================
-    // 🛡️ SECURITY PATCH: CEK VALIDASI SEKOLAH (ANTI-CURANG)
-    // ============================================================
-
-    // 1. Cek apakah user punya sekolah (menangani kasus user baru di-KICK)
     if (!user.sekolah) {
-      // ROLLBACK SLOT
       await Event.findByIdAndUpdate(eventId, {
         $inc: { lastNumberIssued: -1, slotsTaken: -1 },
       });
@@ -148,29 +122,21 @@ exports.joinQueue = async (req, res) => {
         .json({ message: "Gagal: Anda tidak terdaftar di sekolah manapun." });
     }
 
-    // 2. Cek apakah sekolah user SAMA dengan sekolah penyelenggara event
-    // Gunakan .toString() untuk membandingkan ObjectId dengan aman
     if (user.sekolah.toString() !== updatedEvent.sekolah.toString()) {
-      // ROLLBACK SLOT
       await Event.findByIdAndUpdate(eventId, {
         $inc: { lastNumberIssued: -1, slotsTaken: -1 },
       });
-      return res
-        .status(403)
-        .json({
-          message: "Gagal: Anda bukan anggota sekolah penyelenggara ini.",
-        });
+      return res.status(403).json({
+        message: "Gagal: Anda bukan anggota sekolah penyelenggara ini.",
+      });
     }
-    // ============================================================
 
-    // 2. 🔥 VALIDASI STATUS EVENT (Lanjutan)
     const status = updatedEvent.dynamicStatus;
     const isOverbooked =
       updatedEvent.kapasitas &&
       updatedEvent.slotsTaken > updatedEvent.kapasitas;
 
     if (status === "DITUTUP" || status === "SELESAI" || isOverbooked) {
-      // Rollback
       await Event.findByIdAndUpdate(eventId, {
         $inc: { lastNumberIssued: -1, slotsTaken: -1 },
       });
@@ -181,7 +147,6 @@ exports.joinQueue = async (req, res) => {
       return res.status(403).json({ message: message });
     }
 
-    // 3. Cek Duplikat User
     const batchAktif = updatedEvent.currentBatch || 1;
 
     const existing = await QueueEntry.findOne({
@@ -194,7 +159,6 @@ exports.joinQueue = async (req, res) => {
     });
 
     if (existing) {
-      // Rollback
       await Event.findByIdAndUpdate(eventId, {
         $inc: { lastNumberIssued: -1, slotsTaken: -1 },
       });
@@ -203,7 +167,6 @@ exports.joinQueue = async (req, res) => {
         .json({ message: "Anda sudah memiliki antrean aktif." });
     }
 
-    // 4. Buat Tiket Baru
     const newEntry = new QueueEntry({
       event: eventId,
       pengguna: user._id,
@@ -213,10 +176,10 @@ exports.joinQueue = async (req, res) => {
     });
 
     newEntry.qrExpiresAt = new Date(Date.now() + 5 * 60000);
-    // Pastikan SECRET_KEY sudah di-import/defined
+
     newEntry.qrToken = jwt.sign(
       { qid: newEntry._id, eid: eventId },
-      process.env.JWT_SECRET || "rahasia_negara", // Pastikan pakai env yang benar
+      process.env.JWT_SECRET || "rahasia_negara",
       { expiresIn: "5m" }
     );
 
@@ -242,7 +205,6 @@ exports.resetQueueCounter = async (req, res) => {
     if (!event)
       return res.status(404).json({ message: "Layanan tidak ditemukan" });
 
-    // 🔥 LOGIKA 1: CEK BATCH KOSONG (Resume Batch Lama)
     if (
       (!event.slotsTaken || event.slotsTaken === 0) &&
       (!event.lastNumberIssued || event.lastNumberIssued === 0)
@@ -250,7 +212,7 @@ exports.resetQueueCounter = async (req, res) => {
       const updateSimple = {
         statusKegiatan: "TERBUKA",
         isLocked: false,
-        // 👇 WAJIB DI-RESET AGAR SWITCH MAU NYALA
+
         waktuMulai: null,
         waktuSelesai: null,
       };
@@ -270,7 +232,6 @@ exports.resetQueueCounter = async (req, res) => {
       });
     }
 
-    // 🔥 LOGIKA 2: AUTO-CLEAN (Pindahkan sisa antrean ke TERLEWAT)
     const activeFilter = {
       event: eventId,
       statusAntrian: {
@@ -290,7 +251,6 @@ exports.resetQueueCounter = async (req, res) => {
       });
     }
 
-    // --- PROSES RESET KE BATCH BARU ---
     const nextBatch = (event.currentBatch || 1) + 1;
 
     const updateData = {
@@ -299,7 +259,7 @@ exports.resetQueueCounter = async (req, res) => {
       slotsTaken: 0,
       statusKegiatan: "TERBUKA",
       isLocked: false,
-      // 👇 WAJIB DI-RESET JUGA DI SINI
+
       waktuMulai: null,
       waktuSelesai: null,
 
@@ -330,12 +290,11 @@ exports.resetQueueCounter = async (req, res) => {
 
 exports.getMyQueues = async (req, res) => {
   try {
-    // 🔥 FIX: Pakai req.user langsung
     const user = req.user;
     if (!user)
       return res.status(404).json({ message: "Pengguna tidak ditemukan" });
 
-    const allQueues = await QueueEntry.find({ pengguna: user._id }) // ✅ Pakai _id
+    const allQueues = await QueueEntry.find({ pengguna: user._id })
       .populate(
         "event",
         "namaKegiatan idKegiatan namaSekolah statusKegiatan avgServiceMinutes lokasiKegiatan"
@@ -362,7 +321,6 @@ exports.getQueueDetail = async (req, res) => {
   try {
     const { queueId } = req.params;
 
-    // 1. Ambil data antrean user ini
     const myQueue = await QueueEntry.findById(queueId).populate("event");
 
     if (!myQueue) {
@@ -372,24 +330,18 @@ exports.getQueueDetail = async (req, res) => {
       });
     }
 
-    // 2. 🔥 HITUNG JUMLAH ORANG DI DEPAN (Ini yang bikin frontend lu error sebelumnya)
-    // Logika: Hitung berapa orang yang statusnya MENUNGGU dan daftarnya LEBIH DULU dari user ini
     const peopleAhead = await QueueEntry.countDocuments({
       event: myQueue.event._id,
       statusAntrian: "MENUNGGU",
-      waktuDaftar: { $lt: myQueue.waktuDaftar }, // $lt = Less Than (Lebih dulu)
+      waktuDaftar: { $lt: myQueue.waktuDaftar },
     });
 
-    // 3. 🔥 HITUNG ESTIMASI WAKTU
-    // Ambil rata-rata waktu layanan dari event (default 5 menit)
     const avgTime = myQueue.event.avgServiceMinutes || 5;
     const estimatedMinutes = peopleAhead * avgTime;
 
-    // Tambahkan menit ke waktu sekarang
     const estimatedTime = new Date();
     estimatedTime.setMinutes(estimatedTime.getMinutes() + estimatedMinutes);
 
-    // 4. Kirim Data Lengkap ke Flutter
     res.json({
       status: "success",
       data: {
@@ -400,7 +352,6 @@ exports.getQueueDetail = async (req, res) => {
         waktuDaftar: myQueue.waktuDaftar,
         event: myQueue.event,
 
-        // 👇 DUA INI YANG DITUNGGU FLUTTER
         peopleAhead: peopleAhead,
         estimatedTime: estimatedTime,
       },
@@ -465,7 +416,6 @@ exports.adminCallNext = async (req, res) => {
     if (!event)
       return res.status(404).json({ message: "Event tidak ditemukan" });
 
-    // 1. Validasi Status Akhir
     if (
       event.dynamicStatus === "SELESAI" ||
       event.dynamicStatus === "BERLALU"
@@ -516,36 +466,6 @@ exports.adminCallNext = async (req, res) => {
     nextQueue.waktuKadaluarsa = new Date(Date.now() + graceDuration * 60000);
 
     await nextQueue.save();
-
-    if (nextQueue.pengguna && nextQueue.pengguna.fcmToken) {
-      sendPushNotification(
-        nextQueue.pengguna.fcmToken,
-        "Giliran Anda! 📢",
-        `Nomor #${nextQueue.nomorAntrian} silakan menuju lokasi layanan.`,
-        { type: "CALLING", eventId: eventId }
-      );
-    }
-
-    // 🔥 NOTIFIKASI 2: Antrian Mendekat (Ke orang ke-2 di daftar tunggu)
-    const upcomingUser = await QueueEntry.findOne({
-      event: event._id,
-      statusAntrian: "MENUNGGU",
-    })
-      .sort({ nomorAntrian: 1 })
-      .populate("pengguna");
-
-    if (
-      upcomingUser &&
-      upcomingUser.pengguna &&
-      upcomingUser.pengguna.fcmToken
-    ) {
-      sendPushNotification(
-        upcomingUser.pengguna.fcmToken,
-        "Siap-siap! ⏳",
-        "1-2 orang lagi giliran Anda. Mohon mendekat ke lokasi.",
-        { type: "NEARBY", eventId: eventId }
-      );
-    }
 
     res.status(200).json({
       message: `Memanggil #${nextQueue.nomorAntrian}. Batas hadir ${graceDuration} menit.`,
@@ -647,33 +567,28 @@ exports.adminRespondPostpone = async (req, res) => {
     if (!oldQueue)
       return res.status(404).json({ message: "Antrean tidak ditemukan" });
 
-    // Gunakan Atomic Update untuk Event agar aman dari Race Condition
     const event = await Event.findById(oldQueue.event);
     const batchAktif = event.currentBatch || 1;
 
     if (action === "APPROVE") {
-      // 1. Antrean Lama jadi TERLEWAT (Beban kerja admin sudah terpakai di sini)
       oldQueue.statusAntrian = "TERLEWAT";
       oldQueue.alasanTunda =
         (oldQueue.alasanTunda || "") + " (Tunda disetujui)";
       await oldQueue.save();
 
-      // 2. Update Event: Naikkan Nomor Terakhir & TAMBAH SlotsTaken (+1)
-      // 🔥 FIX: Jangan hitung ulang (countDocuments), cukup tambah 1 slot baru.
       const updatedEvent = await Event.findByIdAndUpdate(
         event._id,
         {
           $inc: {
             lastNumberIssued: 1,
-            slotsTaken: 1, // Tambah 1 karena ada antrean baru yang terbentuk
+            slotsTaken: 1,
           },
         },
-        { new: true } // Ambil data terbaru
+        { new: true }
       );
 
       const nextNumber = updatedEvent.lastNumberIssued;
 
-      // 3. Buat Antrean Baru
       const newQueue = new QueueEntry({
         event: event._id,
         pengguna: oldQueue.pengguna,
@@ -687,15 +602,11 @@ exports.adminRespondPostpone = async (req, res) => {
 
       await newQueue.save();
 
-      // ❌ HAPUS BAGIAN countDocuments DI SINI ❌
-      // (Kode lama yang menghancurkan kapasitas dihapus total)
-
       res.status(200).json({
         message: `Berhasil. Nomor #${oldQueue.nomorAntrian} dilewatkan, User kini di nomor #${nextNumber}.`,
         data: newQueue,
       });
     } else {
-      // Logic Tolak (REJECT)
       oldQueue.statusAntrian = "MENUNGGU";
       await oldQueue.save();
       res.status(200).json({
@@ -713,7 +624,6 @@ exports.validateQrAndStartService = async (req, res) => {
   const qrToken = req.body.qrToken || req.body.qr_code;
 
   try {
-    // 1. Validasi format ID MongoDB
     if (!mongoose.Types.ObjectId.isValid(eventId)) {
       return res.status(400).json({
         valid: false,
@@ -722,8 +632,6 @@ exports.validateQrAndStartService = async (req, res) => {
       });
     }
 
-    // 2. 🔥 PROTEKSI UTAMA: Cek Status Kegiatan Sebelum Scan
-    // Ambil data event untuk melihat apakah sudah masa pendaftaran atau belum
     const event = await Event.findById(eventId);
     if (!event) {
       return res
@@ -731,7 +639,6 @@ exports.validateQrAndStartService = async (req, res) => {
         .json({ valid: false, message: "Kegiatan tidak ditemukan" });
     }
 
-    // Cek status menggunakan getter virtual dynamicStatus yang sudah kita buat
     if (event.dynamicStatus === "PRE-ORDER") {
       return res.status(403).json({
         valid: false,
@@ -746,10 +653,8 @@ exports.validateQrAndStartService = async (req, res) => {
       });
     }
 
-    // 3. Verifikasi Token QR
     const decoded = jwt.verify(qrToken, SECRET_KEY);
 
-    // Cari data antrean berdasarkan ID dari Token dan ID Kegiatan
     const queueEntry = await QueueEntry.findOne({
       _id: decoded.qid,
       event: eventId,
@@ -761,7 +666,6 @@ exports.validateQrAndStartService = async (req, res) => {
         .json({ valid: false, message: "QR tidak ditemukan di kegiatan ini" });
     }
 
-    // 4. Validasi Status Antrean User
     const blockedStatuses = ["SELESAI", "BATAL", "TERLEWAT", "DIBATALKAN"];
     if (blockedStatuses.includes(queueEntry.statusAntrian)) {
       return res.status(400).json({
@@ -770,7 +674,6 @@ exports.validateQrAndStartService = async (req, res) => {
       });
     }
 
-    // 5. Cek Giliran (FIFO)
     if (queueEntry.statusAntrian !== "DILAYANI") {
       const peopleAhead = await QueueEntry.countDocuments({
         event: eventId,
@@ -785,13 +688,11 @@ exports.validateQrAndStartService = async (req, res) => {
         });
       }
 
-      // Mulai pelayanan jika semua syarat terpenuhi
       queueEntry.statusAntrian = "DILAYANI";
       queueEntry.waktuMulaiLayanan = new Date();
       await queueEntry.save();
     }
 
-    // 6. Kirim Respon Berhasil
     res.json({
       valid: true,
       message: "Berhasil memuat data layanan",
@@ -880,7 +781,6 @@ exports.adminServeQueue = async (req, res) => {
 exports.refreshQrToken = async (req, res) => {
   const { queueId } = req.params;
 
-  // 🔥 FIX: Ambil data user dari middleware
   const user = req.user;
 
   try {
@@ -888,7 +788,6 @@ exports.refreshQrToken = async (req, res) => {
     if (!queue)
       return res.status(404).json({ message: "Data tidak ditemukan" });
 
-    // Validasi Pemilik
     if (!user || queue.pengguna.toString() !== user._id.toString()) {
       return res.status(403).json({ message: "Akses ditolak." });
     }
@@ -937,8 +836,6 @@ exports.userCancelQueue = async (req, res) => {
     const event = entry.event;
     const isPreOrder = event.dynamicStatus === "PRE-ORDER";
 
-    // 🔥 FIX: Kurangi slotsTaken (-1) karena beban kerja ini batal dikerjakan
-    // Ini berlaku baik untuk Pre-Order (Hapus) maupun Antrean Aktif (Batal)
     await Event.findByIdAndUpdate(event._id, {
       $inc: { slotsTaken: -1 },
     });
@@ -946,10 +843,8 @@ exports.userCancelQueue = async (req, res) => {
     if (isPreOrder) {
       const isLatest = entry.nomorAntrian === event.lastNumberIssued;
 
-      // Hapus data antrean secara permanen (Hard Delete)
       await QueueEntry.findByIdAndDelete(queueId);
 
-      // Jika yang batal adalah nomor terakhir, mundurkan counter nomor
       if (isLatest) {
         await Event.findByIdAndUpdate(event._id, {
           $inc: { lastNumberIssued: -1 },
@@ -961,10 +856,9 @@ exports.userCancelQueue = async (req, res) => {
           "Pendaftaran Pre-Order berhasil dibatalkan. Slot dikembalikan.",
       });
     } else {
-      // Ubah status jadi DIBATALKAN (Soft Delete)
       entry.statusAntrian = "DIBATALKAN";
       entry.alasanBatal = req.body.alasan || "Dibatalkan oleh pengguna";
-      entry.waktuSelesai = new Date(); // Catat waktu pembatalan
+      entry.waktuSelesai = new Date();
       await entry.save();
 
       return res.status(200).json({
@@ -989,11 +883,9 @@ exports.exportQueueToExcel = async (req, res) => {
     if (!event)
       return res.status(404).json({ message: "Event tidak ditemukan" });
 
-    // Filter Batch
     let filter = { event: eventId };
     if (batch) filter.batch = parseInt(batch);
 
-    // 🔥 1. POPULATE SEMUA FIELD BIODATA (Nama, NIS, Kelas, Sekolah, Ortu, Alamat, dll)
     const queues = await QueueEntry.find(filter)
       .populate(
         "pengguna",
@@ -1004,8 +896,7 @@ exports.exportQueueToExcel = async (req, res) => {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Laporan Lengkap");
 
-    // --- HEADER JUDUL (Styling) ---
-    worksheet.mergeCells("A1:O1"); // Merge sampai kolom O
+    worksheet.mergeCells("A1:O1");
     const titleCell = worksheet.getCell("A1");
     titleCell.value = `LAPORAN LENGKAP: ${event.namaKegiatan.toUpperCase()} ${
       batch ? "(BATCH " + batch + ")" : ""
@@ -1016,7 +907,7 @@ exports.exportQueueToExcel = async (req, res) => {
       type: "pattern",
       pattern: "solid",
       fgColor: { argb: "FFF3E5F5" },
-    }; // Ungu Muda
+    };
 
     worksheet.mergeCells("A2:O2");
     worksheet.getCell("A2").value = `Total Data: ${
@@ -1026,29 +917,27 @@ exports.exportQueueToExcel = async (req, res) => {
 
     worksheet.addRow([]);
 
-    // --- HEADER TABEL (KOMPLIT) ---
     const headers = [
-      "Batch", // A
-      "No. Antre", // B
-      "Status", // C
-      "Nama Lengkap", // D
-      "NIS / NIK", // E
-      "L/P", // F (Gender)
-      "Kelas", // G
-      "Asal Sekolah", // H
-      "Nama Orang Tua", // I
-      "No HP (WA)", // J
-      "Email", // K
-      "Alamat", // L
-      "Waktu Daftar", // M
-      "Waktu Selesai", // N
-      "Foto Profil", // O
+      "Batch",
+      "No. Antre",
+      "Status",
+      "Nama Lengkap",
+      "NIS / NIK",
+      "L/P",
+      "Kelas",
+      "Asal Sekolah",
+      "Nama Orang Tua",
+      "No HP (WA)",
+      "Email",
+      "Alamat",
+      "Waktu Daftar",
+      "Waktu Selesai",
+      "Foto Profil",
     ];
 
     const headerRow = worksheet.getRow(4);
     headerRow.values = headers;
 
-    // Style Header: Warna Ungu Tua, Teks Putih, Bold
     headerRow.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
     headerRow.height = 25;
     headerRow.eachCell((cell) => {
@@ -1066,11 +955,9 @@ exports.exportQueueToExcel = async (req, res) => {
       };
     });
 
-    // --- ISI DATA ---
     queues.forEach((q) => {
       const u = q.pengguna || {};
 
-      // Helper format tanggal
       const formatDate = (date) =>
         date
           ? new Date(date).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })
@@ -1090,14 +977,12 @@ exports.exportQueueToExcel = async (req, res) => {
         u.email || "-",
         u.alamat || "-",
         formatDate(q.waktuDaftar),
-        formatDate(q.waktuSelesaiLayanan), // Waktu selesai dilayani
+        formatDate(q.waktuSelesaiLayanan),
         u.fotoProfil || "-",
       ]);
 
-      // Styling Baris
       row.alignment = { vertical: "middle", wrapText: true };
 
-      // Center Alignment untuk kolom-kolom pendek
       [1, 2, 3, 5, 6, 13, 14].forEach((colIdx) => {
         row.getCell(colIdx).alignment = {
           horizontal: "center",
@@ -1106,34 +991,31 @@ exports.exportQueueToExcel = async (req, res) => {
         };
       });
 
-      // Hyperlink Foto
       if (u.fotoProfil) {
-        const cell = row.getCell(15); // Kolom O
+        const cell = row.getCell(15);
         cell.value = { text: "Lihat Foto", hyperlink: u.fotoProfil };
         cell.font = { color: { argb: "FF1E88E5" }, underline: true };
       }
     });
 
-    // --- LEBAR KOLOM (Disesuaikan dengan konten) ---
     worksheet.columns = [
-      { width: 8 }, // Batch
-      { width: 10 }, // No
-      { width: 15 }, // Status
-      { width: 30 }, // Nama
-      { width: 15 }, // NIS
-      { width: 8 }, // LP
-      { width: 12 }, // Kelas
-      { width: 25 }, // Sekolah
-      { width: 25 }, // Ortu
-      { width: 18 }, // HP
-      { width: 25 }, // Email
-      { width: 40 }, // Alamat
-      { width: 20 }, // Daftar
-      { width: 20 }, // Selesai
-      { width: 12 }, // Foto
+      { width: 8 },
+      { width: 10 },
+      { width: 15 },
+      { width: 30 },
+      { width: 15 },
+      { width: 8 },
+      { width: 12 },
+      { width: 25 },
+      { width: 25 },
+      { width: 18 },
+      { width: 25 },
+      { width: 40 },
+      { width: 20 },
+      { width: 20 },
+      { width: 12 },
     ];
 
-    // Kirim Response
     res.setHeader(
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -1152,14 +1034,12 @@ exports.exportQueueToExcel = async (req, res) => {
   }
 };
 
-// 🔥 FUNGSI 2: UNTUK LIST DI HALAMAN REPORT
 exports.getQueueListByEvent = async (req, res) => {
   try {
     const eventId = req.query.eventIdKegiatan;
     if (!eventId)
       return res.status(400).json({ message: "ID Layanan diperlukan." });
 
-    // Cari Event dulu biar aman (bisa pakai ID Mongo atau ID Kegiatan string)
     const event = await Event.findOne({
       $or: [
         { _id: mongoose.isValidObjectId(eventId) ? eventId : null },
@@ -1172,7 +1052,7 @@ exports.getQueueListByEvent = async (req, res) => {
 
     const list = await QueueEntry.find({ event: event._id })
       .sort({ nomorAntrian: 1 })
-      .populate("pengguna", "namaPengguna email"); // Ambil nama & email user
+      .populate("pengguna", "namaPengguna email");
 
     res.json(list);
   } catch (e) {
@@ -1186,7 +1066,6 @@ exports.seedQueue = async (req, res) => {
   const count = jumlah || 10;
 
   try {
-    // 1. Cari Event (Tetap Hybrid agar mudah testing pakai "BK-001")
     const event = mongoose.Types.ObjectId.isValid(eventId)
       ? await Event.findById(eventId)
       : await Event.findOne({ idKegiatan: eventId });
@@ -1211,7 +1090,6 @@ exports.seedQueue = async (req, res) => {
       currentNumber++;
       const rnd = Math.random().toString(36).substring(7);
 
-      // 2. Buat User Bot
       const botUser = await User.create({
         namaPengguna: `Siswa Bot #${currentNumber}`,
         email: `bot_${rnd}@test.com`,
@@ -1220,23 +1098,20 @@ exports.seedQueue = async (req, res) => {
         passwordHash: "seeded_bot_password_hash",
       });
 
-      // 3. Generate ID Antrean manual
       const botQueueId = new mongoose.Types.ObjectId();
 
-      // 4. 🔥 PERBAIKAN UTAMA: Tambahkan .toString() agar Payload JWT bersih
       const virtualToken = jwt.sign(
         {
-          qid: botQueueId.toString(), // Wajib String!
-          eid: event._id.toString(), // Wajib String!
+          qid: botQueueId.toString(),
+          eid: event._id.toString(),
         },
         SECRET_KEY,
         { expiresIn: "24h" }
       );
 
-      // 5. Simpan QueueEntry
       const q = await QueueEntry.create({
         _id: botQueueId,
-        event: event._id, // Masuk sebagai ObjectId asli
+        event: event._id,
         pengguna: botUser._id,
         nomorAntrian: currentNumber,
         batch: batchAktif,
@@ -1248,7 +1123,6 @@ exports.seedQueue = async (req, res) => {
       createdQueues.push(q);
     }
 
-    // 6. Update Statistik Event
     event.lastNumberIssued = currentNumber;
     event.slotsTaken = (event.slotsTaken || 0) + count;
     await event.save();
@@ -1277,12 +1151,10 @@ exports.cancelAllQueuesByUser = async (req, res) => {
   const { userId } = req.body;
 
   try {
-    
     if (!userId) {
       return res.status(400).json({ message: "User ID wajib dikirim." });
     }
 
-    // 1. Cari antrean aktif menggunakan 'QueueEntry'
     const activeQueues = await QueueEntry.find({
       pengguna: userId,
       statusAntrian: { $in: ["MENUNGGU", "DIPANGGIL", "REQ_TUNDA"] },
@@ -1296,7 +1168,6 @@ exports.cancelAllQueuesByUser = async (req, res) => {
       });
     }
 
-    // 2. Update status antrean menjadi DIBATALKAN menggunakan 'QueueEntry'
     const result = await QueueEntry.updateMany(
       {
         pengguna: userId,
@@ -1311,7 +1182,6 @@ exports.cancelAllQueuesByUser = async (req, res) => {
       }
     );
 
-    // 3. Kembalikan slot kuota (slotsTaken -1) pada Event terkait
     const updatePromises = activeQueues.map((q) =>
       Event.findByIdAndUpdate(q.event, { $inc: { slotsTaken: -1 } })
     );

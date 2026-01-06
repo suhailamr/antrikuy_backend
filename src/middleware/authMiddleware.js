@@ -1,5 +1,5 @@
 const admin = require("../firebase/firebaseAdmin");
-const User = require("../models/User"); // 🔥 Import Model User
+const User = require("../models/User");
 
 /**
  * Middleware: PROTECT
@@ -18,11 +18,9 @@ exports.protect = async (req, res, next) => {
       token = req.headers.authorization.split(" ")[1];
       const decodedToken = await admin.auth().verifyIdToken(token);
 
-      // Coba cari user
       const user = await User.findOne({ firebaseUid: decodedToken.uid });
 
       if (!user) {
-        // ... kode error user tidak ditemukan ...
         return res
           .status(404)
           .json({ success: false, message: "User tidak ditemukan" });
@@ -31,7 +29,7 @@ exports.protect = async (req, res, next) => {
       req.user = user;
       next();
     } catch (error) {
-      console.error("Auth Error:", error.message); // Log error singkat saja
+      console.error("Auth Error:", error.message);
       return res.status(401).json({ message: "Not authorized" });
     }
   } else {
@@ -45,7 +43,6 @@ exports.protect = async (req, res, next) => {
  */
 exports.authorize = (...roles) => {
   return (req, res, next) => {
-    // req.user sudah diisi oleh middleware 'protect' di atas
     if (!req.user) {
       return res.status(401).json({
         success: false,
@@ -53,7 +50,6 @@ exports.authorize = (...roles) => {
       });
     }
 
-    // Cek apakah peran user ada di dalam daftar roles yang diizinkan
     if (!roles.includes(req.user.peran)) {
       return res.status(403).json({
         success: false,

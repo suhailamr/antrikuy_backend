@@ -5,17 +5,11 @@ const QueueEntry = require("../models/QueueEntry");
 const SchoolMember = require("../models/SchoolMember");
 const DissolveRequest = require("../models/DissolveRequest");
 const mongoose = require("mongoose");
-const { sendPushNotification } = require("../utils/notificationHelper");
-
-// 1. Ambil sekolah yang SUDAH AKTIF (Untuk Dashboard Utama)
-// src/controllers/superAdminController.js
 
 exports.getAllSchools = async (req, res) => {
   try {
-    // Ambil semua data
     const allSchools = await School.find().sort({ namaSekolah: 1 });
 
-    // Filter secara manual menggunakan fungsi JavaScript (Lebih Pasti)
     const filtered = allSchools.filter((s) => s.penyediaAntrian === true);
 
     console.log(
@@ -30,10 +24,6 @@ exports.getAllSchools = async (req, res) => {
     res.status(500).json({ message: "Gagal mengambil daftar sekolah" });
   }
 };
-
-// src/controllers/superAdminController.js
-
-// src/controllers/superAdminController.js
 
 exports.getPendingSchools = async (req, res) => {
   try {
@@ -78,7 +68,6 @@ exports.getPendingSchools = async (req, res) => {
   }
 };
 
-// 3. Logic Review Sekolah Baru (Setujui/Tolak)
 exports.reviewSchoolRequest = async (req, res) => {
   const { schoolId, userId, action } = req.body;
   try {
@@ -86,7 +75,6 @@ exports.reviewSchoolRequest = async (req, res) => {
     if (!school)
       return res.status(404).json({ message: "Sekolah tidak ditemukan" });
 
-    // Cari data user lengkap untuk mendapatkan fcmToken
     const targetUser = await User.findById(userId);
 
     if (action === "APPROVE") {
@@ -104,27 +92,7 @@ exports.reviewSchoolRequest = async (req, res) => {
         { status: "approved", role: "admin" },
         { upsert: true }
       );
-
-      // 🔥 KIRIM NOTIFIKASI PENERIMAAN
-      if (targetUser && targetUser.fcmToken) {
-        sendPushNotification(
-          targetUser.fcmToken,
-          "Selamat! Pengajuan Diterima 🎉",
-          `Sekolah ${school.namaSekolah} telah diverifikasi. Anda kini adalah Admin Sekolah.`,
-          { type: "SCHOOL_APPROVED", schoolId: school._id.toString() }
-        );
-      }
     } else {
-      // Logic jika ditolak
-      if (targetUser && targetUser.fcmToken) {
-        sendPushNotification(
-          targetUser.fcmToken,
-          "Update Pengajuan Sekolah 📋",
-          `Mohon maaf, pengajuan sekolah ${school.namaSekolah} belum dapat kami setujui saat ini.`,
-          { type: "SCHOOL_REJECTED" }
-        );
-      }
-
       await SchoolMember.deleteMany({ school: schoolId });
       await School.findByIdAndDelete(schoolId);
     }
@@ -135,7 +103,6 @@ exports.reviewSchoolRequest = async (req, res) => {
   }
 };
 
-// 4. Pengajuan Pembubaran oleh Admin Sekolah
 exports.requestSchoolDissolution = async (req, res) => {
   try {
     const { schoolId } = req.params;
@@ -167,18 +134,14 @@ exports.requestSchoolDissolution = async (req, res) => {
   }
 };
 
-// src/controllers/superAdminController.js
-
-// Ambil pengajuan pembubaran PENDING
 exports.getPendingDissolutions = async (req, res) => {
-  // 🔥 Tambahkan log ini untuk memastikan request masuk
   console.log("📩 Request masuk ke getPendingDissolutions");
 
   try {
     const requests = await DissolveRequest.find({ status: "PENDING" })
       .populate({
         path: "school",
-        // Gunakan model name yang tepat (School)
+
         model: "School",
         select: "namaSekolah idSekolah npsn alamat",
       })
@@ -192,7 +155,6 @@ exports.getPendingDissolutions = async (req, res) => {
   }
 };
 
-// Setujui Pembubaran (Aksi Destruktif Total)
 exports.approveDissolution = async (req, res) => {
   const { requestId } = req.params;
 
@@ -204,10 +166,8 @@ exports.approveDissolution = async (req, res) => {
         .json({ message: "Request tidak valid atau sudah diproses" });
     }
 
-    const schoolObjectId = request.school; // ObjectId: 69324108c7fde4fa1f10bb08
+    const schoolObjectId = request.school;
 
-    // 1. Reset SEMUA User terkait (Kecuali Super Admin & Peneliti)
-    // Gunakan field 'sekolah' sesuai UserSchema Anda
     await User.updateMany(
       {
         sekolah: schoolObjectId,
@@ -221,7 +181,7 @@ exports.approveDissolution = async (req, res) => {
           adminRequestStatus: "NONE",
         },
         $unset: {
-          nis: "", // ✅ HARUS UNSET
+          nis: "",
           kelas: "",
           jurusan: "",
           kategoriSekolah: "",
@@ -229,13 +189,9 @@ exports.approveDissolution = async (req, res) => {
       }
     );
 
-    // 2. Cari semua ID Event milik sekolah ini
-    // Berdasarkan data Anda, field di koleksi Event adalah 'sekolah' (ObjectId)
     const events = await Event.find({ sekolah: schoolObjectId });
     const eventIds = events.map((e) => e._id);
 
-    // 3. Hapus Antrean (QueueEntry) berdasarkan ID Event yang ditemukan
-    // Field di QueueEntry Anda adalah 'event'
     if (eventIds.length > 0) {
       const queueResult = await QueueEntry.deleteMany({
         event: { $in: eventIds },
@@ -243,15 +199,12 @@ exports.approveDissolution = async (req, res) => {
       console.log(`✅ Berhasil menghapus ${queueResult.deletedCount} antrean`);
     }
 
-    // 4. Hapus Kegiatan (Event) milik sekolah
     const eventResult = await Event.deleteMany({ sekolah: schoolObjectId });
     console.log(`✅ Berhasil menghapus ${eventResult.deletedCount} kegiatan`);
 
-    // 5. Hapus data Keanggotaan (SchoolMember) dan Sekolah itu sendiri
     await SchoolMember.deleteMany({ school: schoolObjectId });
     await School.findByIdAndDelete(schoolObjectId);
 
-    // 6. Update status request pembubaran
     request.status = "APPROVED";
     await request.save();
 
@@ -267,7 +220,6 @@ exports.approveDissolution = async (req, res) => {
   }
 };
 
-// 7. Tolak Request Pembubaran
 exports.rejectDissolution = async (req, res) => {
   try {
     await DissolveRequest.findByIdAndUpdate(req.params.requestId, {
@@ -279,7 +231,6 @@ exports.rejectDissolution = async (req, res) => {
   }
 };
 
-// 8. Utility: Get School by ID & Members
 exports.getSchoolById = async (req, res) => {
   console.log("🚨 MASUK getSchoolById, schoolId =", req.params.schoolId);
   try {

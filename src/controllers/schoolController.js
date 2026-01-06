@@ -1,21 +1,18 @@
 const mongoose = require("mongoose");
 const School = require("../models/School");
 const SchoolMember = require("../models/SchoolMember");
-const User = require("../models/User"); // ✅ Dideklarasikan 1x saja di sini
+const User = require("../models/User");
 const QueueEntry = require("../models/QueueEntry");
 const Event = require("../models/Events");
 
 const getUserFromToken = async (req) => {
   if (req._id) return req;
 
-  // Jika req adalah objek request Express
   if (req.user) return req.user;
 
   throw new Error("Pengguna tidak terautentikasi");
 };
-// ==========================================
-// 1. LEAVE SCHOOL (KELUAR MANDIRI)
-// ==========================================
+
 exports.leaveSchool = async (req, res) => {
   try {
     const currentUser = await getUserFromToken(req);
@@ -28,7 +25,6 @@ exports.leaveSchool = async (req, res) => {
 
     const schoolId = currentUser.sekolah._id || currentUser.sekolah;
 
-    // A. CEK KEAMANAN (Admin Terakhir Dilarang Keluar)
     if (currentUser.peran === "ADMIN") {
       const adminCount = await User.countDocuments({
         sekolah: schoolId,
@@ -44,7 +40,6 @@ exports.leaveSchool = async (req, res) => {
       }
     }
 
-    // B. Update Status di History (SchoolMember)
     await SchoolMember.updateMany(
       { user: currentUser._id, school: schoolId, status: "approved" },
       {
@@ -56,7 +51,6 @@ exports.leaveSchool = async (req, res) => {
       }
     );
 
-    // C. 🔥 RESET USER (Hapus Sekolah, Peran, dan NIS)
     await User.updateOne(
       { _id: currentUser._id },
       {
@@ -66,7 +60,7 @@ exports.leaveSchool = async (req, res) => {
           peran: "PENGGUNA",
         },
         $unset: {
-          nis: "", // 👈 INI KUNCINYA. Menghapus field NIS, bukan mengisinya dengan null.
+          nis: "",
         },
       }
     );
@@ -80,9 +74,6 @@ exports.leaveSchool = async (req, res) => {
   }
 };
 
-// ==========================================
-// 2. LIST MEMBERS
-// ==========================================
 exports.listMembers = async (req, res) => {
   try {
     const currentUser = await getUserFromToken(req);
@@ -92,7 +83,6 @@ exports.listMembers = async (req, res) => {
     const filter = { school: schoolId };
     if (status) filter.status = status.toLowerCase();
 
-    // Ambil data anggota
     const members = await SchoolMember.find(filter)
       .populate(
         "user",
@@ -100,7 +90,6 @@ exports.listMembers = async (req, res) => {
       )
       .sort({ updatedAt: -1 });
 
-    // 🔥 PERBAIKAN: Filter data agar User valid DAN bukan SUPER_ADMIN
     const validMembers = members.filter((m) => {
       return m.user != null && m.user.peran !== "SUPER_ADMIN";
     });
@@ -118,7 +107,7 @@ exports.listMembers = async (req, res) => {
           totalAntrean: totalAntreanSelesai,
           adminRequestStatus: m.adminRequestStatus || "NONE",
           nip: m.nip || null,
-          ...m.user._doc, // Mengambil data user
+          ...m.user._doc,
         };
       })
     );
@@ -130,9 +119,6 @@ exports.listMembers = async (req, res) => {
   }
 };
 
-// ==========================================
-// 3. CREATE SCHOOL
-// ==========================================
 exports.createSchool = async (req, res) => {
   try {
     const { namaSekolah, kategoriSekolah, kodeAksesStatis, idSekolah } =
@@ -152,9 +138,6 @@ exports.createSchool = async (req, res) => {
   }
 };
 
-// ==========================================
-// 4. LIST SCHOOLS
-// ==========================================
 exports.listSchools = async (req, res) => {
   try {
     let { kategoriSekolah, search, page = 1, limit = 10 } = req.query;
@@ -162,9 +145,7 @@ exports.listSchools = async (req, res) => {
       try {
         const currentUser = await getUserFromToken(req.user);
         kategoriSekolah = currentUser.kategoriSekolah;
-      } catch (err) {
-        // Abaikan jika filter silang gagal
-      }
+      } catch (err) {}
     }
 
     const filter = {};
@@ -191,15 +172,11 @@ exports.listSchools = async (req, res) => {
   }
 };
 
-// ==========================================
-// 5. JOIN SCHOOL (REQUEST)
-// ==========================================
 exports.joinSchool = async (req, res) => {
   try {
     const currentUser = await getUserFromToken(req);
     const { schoolId } = req.params;
 
-    // 1. CARI SEKOLAH TARGET
     const school = mongoose.Types.ObjectId.isValid(schoolId)
       ? await School.findById(schoolId)
       : await School.findOne({ idSekolah: schoolId });
@@ -207,24 +184,18 @@ exports.joinSchool = async (req, res) => {
     if (!school)
       return res.status(404).json({ message: "Sekolah tidak ditemukan" });
 
-    // 2. BERSIHKAN STATUS AKTIF DI SEKOLAH LAIN (Supaya tidak double active)
     await SchoolMember.deleteMany({
       user: currentUser._id,
       status: { $in: ["pending", "approved"] },
-      school: { $ne: school._id }, // Jangan hapus history sekolah INI
+      school: { $ne: school._id },
     });
 
-    // 3. CEK APAKAH PERNAH GABUNG DI SINI? (Cek history 'left', 'rejected', dll)
     const existingMember = await SchoolMember.findOne({
       school: school._id,
       user: currentUser._id,
     });
 
     if (existingMember) {
-      // 🔥 KASUS 1: DATA LAMA DITEMUKAN (RE-JOIN)
-      // Kita update baris lama, jangan bikin baru biar gak error Duplicate Key
-
-      // Cek dulu kalau ternyata iseng join padahal udah aktif
       if (existingMember.status === "approved") {
         return res
           .status(409)
@@ -236,14 +207,11 @@ exports.joinSchool = async (req, res) => {
           .json({ message: "Pengajuan Anda sedang diproses." });
       }
 
-      // Update data lama jadi pending lagi
       existingMember.status = "pending";
       existingMember.role = currentUser.diwakiliOrangTua ? "parent" : "student";
       existingMember.adminRequestStatus = "NONE";
-      await existingMember.save(); // Simpan perubahan
+      await existingMember.save();
     } else {
-      // 🔥 KASUS 2: BELUM PERNAH GABUNG SAMA SEKALI
-      // Baru boleh pakai Create
       await SchoolMember.create({
         school: school._id,
         user: currentUser._id,
@@ -253,7 +221,6 @@ exports.joinSchool = async (req, res) => {
       });
     }
 
-    // 4. RESET FIELD DI USER
     await User.updateOne(
       { _id: currentUser._id },
       { $set: { adminRequestStatus: "NONE", sekolah: null, idSekolah: null } }
@@ -262,7 +229,7 @@ exports.joinSchool = async (req, res) => {
     res.status(201).json({ message: "Pengajuan bergabung berhasil dikirim" });
   } catch (error) {
     console.error("🚨 Join Error:", error);
-    // Tangani error duplicate key sebagai fallback terakhir
+
     if (error.code === 11000) {
       return res
         .status(400)
@@ -272,9 +239,6 @@ exports.joinSchool = async (req, res) => {
   }
 };
 
-// ==========================================
-// 6. UPDATE SCHOOL
-// ==========================================
 exports.updateSchool = async (req, res) => {
   try {
     const { schoolId } = req.params;
@@ -296,9 +260,6 @@ exports.updateSchool = async (req, res) => {
   }
 };
 
-// ==========================================
-// 7. CANCEL JOIN REQUEST
-// ==========================================
 exports.cancelJoinRequest = async (req, res) => {
   try {
     const currentUser = await getUserFromToken(req.user);
@@ -340,14 +301,10 @@ exports.cancelJoinRequest = async (req, res) => {
   }
 };
 
-// ==========================================
-// 8. GET MY SCHOOL STATUS
-// ==========================================
 exports.getMySchoolStatus = async (req, res) => {
   try {
     const currentUser = await getUserFromToken(req);
 
-    // 1. Bypass untuk Super Admin
     if (
       currentUser.peran === "SUPER_ADMIN" ||
       currentUser.peran === "PENELITI"
@@ -364,18 +321,14 @@ exports.getMySchoolStatus = async (req, res) => {
       });
     }
 
-    // 2. Cari semua record keanggotaan user
     const memberships = await SchoolMember.find({ user: currentUser._id })
       .populate("school")
       .sort({ updatedAt: -1 });
 
-    // Cek status secara aman
     const active = memberships.find((m) => m.status === "approved" && m.school);
     const pending = memberships.find((m) => m.status === "pending" && m.school);
 
-    // 3. Logic Sinkronisasi (Hanya jalan jika ada sekolah yang benar-benar aktif)
     if (active && active.school) {
-      // Karena kita sudah pastikan active.school tidak null, aman akses ._id
       const schoolIdStr = active.school._id.toString();
       const userSchoolStr = currentUser.sekolah
         ? currentUser.sekolah.toString()
@@ -394,7 +347,6 @@ exports.getMySchoolStatus = async (req, res) => {
       }
     }
 
-    // 4. Cek pembubaran (Hanya jika user punya sekolah aktif di profilnya)
     let isDissolving = false;
     if (currentUser.sekolah) {
       try {
@@ -404,12 +356,9 @@ exports.getMySchoolStatus = async (req, res) => {
           status: "PENDING",
         });
         isDissolving = !!dr;
-      } catch (e) {
-        /* ignore */
-      }
+      } catch (e) {}
     }
 
-    // 5. Kembalikan Respon (Aman dari null pointer)
     res.json({
       status: active ? "approved" : pending ? "pending" : "none",
       currentSchool: active ? active.school : null,
@@ -423,9 +372,6 @@ exports.getMySchoolStatus = async (req, res) => {
   }
 };
 
-// ==========================================
-// 9. UPDATE MEMBER STATUS (KICK / DEMOTE / APPROVE JOIN)
-// ==========================================
 exports.updateMemberStatus = async (req, res) => {
   try {
     const { membershipId } = req.params;
@@ -437,21 +383,16 @@ exports.updateMemberStatus = async (req, res) => {
     if (!membership)
       return res.status(404).json({ message: "Data anggota tidak ditemukan" });
 
-    // --- APPROVE (Terima Siswa Masuk) ---
     if (action === "APPROVE") {
       membership.status = "approved";
       membership.role = "student";
       await membership.save();
 
-      // (User sudah di-import di atas, jangan declare lagi)
       await User.findByIdAndUpdate(membership.user._id, {
         sekolah: membership.school._id,
         idSekolah: membership.school.idSekolah,
       });
-    }
-
-    // --- DEMOTE (Turunkan Pangkat Admin -> Siswa) ---
-    else if (action === "DEMOTE") {
+    } else if (action === "DEMOTE") {
       const adminCount = await User.countDocuments({
         sekolah: membership.school._id,
         peran: "ADMIN",
@@ -467,17 +408,12 @@ exports.updateMemberStatus = async (req, res) => {
       membership.adminRequestStatus = "NONE";
       await membership.save();
 
-      // Demote hanya turunkan pangkat, sekolah tetap
       await User.findByIdAndUpdate(membership.user._id, { peran: "PENGGUNA" });
 
       return res.json({
         message: "Berhasil menurunkan pangkat menjadi Siswa.",
       });
-    }
-
-    // --- KICK / REJECT (Keluarkan Anggota) ---
-    else if (action === "REJECT" || action === "KICK") {
-      // A. Cek Admin Terakhir
+    } else if (action === "REJECT" || action === "KICK") {
       if (membership.user.peran === "ADMIN" || membership.role === "admin") {
         const adminCount = await User.countDocuments({
           sekolah: membership.school._id,
@@ -491,13 +427,11 @@ exports.updateMemberStatus = async (req, res) => {
         }
       }
 
-      // B. Update History
       membership.status = action === "REJECT" ? "rejected" : "left";
       membership.role = "student";
       membership.adminRequestStatus = "NONE";
       await membership.save();
 
-      // C. 🔥 RESET USER (Hapus Sekolah, Pangkat, dan NIS)
       await User.findByIdAndUpdate(membership.user._id, {
         $set: {
           sekolah: null,
@@ -505,7 +439,7 @@ exports.updateMemberStatus = async (req, res) => {
           peran: "PENGGUNA",
         },
         $unset: {
-          nis: "", // Menghapus field NIS agar tidak dianggap duplikat oleh MongoDB
+          nis: "",
         },
       });
     }
@@ -517,9 +451,6 @@ exports.updateMemberStatus = async (req, res) => {
   }
 };
 
-// ==========================================
-// 10. APPROVE ADMIN REQUEST (NAIK PANGKAT)
-// ==========================================
 exports.approveAdminRequest = async (req, res) => {
   try {
     const { memberId, action } = req.body;
@@ -533,32 +464,25 @@ exports.approveAdminRequest = async (req, res) => {
       return res.status(404).json({ message: "Data anggota tidak ditemukan." });
     }
 
-    // --- REJECT ---
     if (action === "REJECT") {
       member.adminRequestStatus = "REJECTED";
       await member.save();
       return res.status(200).json({ message: "Pengajuan Admin ditolak." });
     }
 
-    // --- APPROVE ---
     if (action === "APPROVE") {
-      // A. Update Member
       member.role = "teacher";
       member.adminRequestStatus = "APPROVED";
       await member.save();
 
-      // B. 🔥 UPDATE USER (Role & NIS)
       const updateData = { peran: "ADMIN" };
 
-      // Timpa NIS dengan NIP jika NIP valid (>= 16 digit)
       if (member.nip && member.nip.length >= 16) {
         updateData.nis = member.nip;
       }
 
-      // (Jangan declare 'User' lagi!)
       await User.findByIdAndUpdate(member.user, { $set: updateData });
 
-      // C. Bersihkan Antrean
       const activeQueues = await QueueEntry.find({
         pengguna: member.user,
         statusAntrian: { $in: ["MENUNGGU", "DIPANGGIL", "REQ_TUNDA"] },
@@ -596,16 +520,12 @@ exports.approveAdminRequest = async (req, res) => {
   }
 };
 
-// ==========================================
-// 11. REQUEST NEW SCHOOL (DAFTAR SEKOLAH BARU)
-// ==========================================
 exports.requestNewSchool = async (req, res) => {
   try {
     const { namaSekolah, npsn, kategoriSekolah, alamat, deskripsi, lat, lng } =
       req.body;
-    const userObjectId = req.user._id; // ID MongoDB Pengaju
+    const userObjectId = req.user._id;
 
-    // Generate ID & Kode (seperti sebelumnya)
     const generatedId = `${namaSekolah
       .toUpperCase()
       .replace(/\s+/g, "-")}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -623,13 +543,12 @@ exports.requestNewSchool = async (req, res) => {
       kodeAksesStatis: generatedKode,
       penyediaAntrian: false,
       lokasiMaps: { lat, lng },
-      createdBy: userObjectId, // 🔥 WAJIB ADA! Ini yang tadi hilang di DB Anda
+      createdBy: userObjectId,
       status: "PENDING",
     });
 
     const savedSchool = await newSchool.save();
 
-    // Buat keanggotaan pending
     await SchoolMember.create({
       school: savedSchool._id,
       user: userObjectId,
@@ -637,10 +556,9 @@ exports.requestNewSchool = async (req, res) => {
       role: "admin",
     });
 
-    // Update User agar terhubung ke ID sekolah (tapi peran tetap pengguna)
     await User.findByIdAndUpdate(userObjectId, {
       idSekolah: savedSchool.idSekolah,
-      sekolah: savedSchool._id, // Hubungkan ObjectID juga
+      sekolah: savedSchool._id,
     });
 
     res.status(201).json({ success: true, message: "Pengajuan dikirim!" });
@@ -649,12 +567,8 @@ exports.requestNewSchool = async (req, res) => {
   }
 };
 
-// ==========================================
-// 12. GET ADMIN STATS (DASHBOARD)
-// ==========================================
 exports.getAdminStats = async (req, res) => {
   try {
-    // 1. Validasi sekolah admin
     const schoolId = req.user.sekolah;
     if (!schoolId) {
       return res.status(400).json({
@@ -663,7 +577,6 @@ exports.getAdminStats = async (req, res) => {
       });
     }
 
-    // 2. Ambil semua event milik sekolah
     const events = await Event.find({ sekolah: schoolId }).select("_id");
     if (!events.length) {
       return res.status(200).json({
@@ -679,13 +592,11 @@ exports.getAdminStats = async (req, res) => {
 
     const eventIds = events.map((e) => e._id);
 
-    // 3. Ambil semua antrian dari event sekolah
     const queues = await QueueEntry.find({ event: { $in: eventIds } })
       .populate("pengguna", "namaPengguna fotoProfil")
       .populate("event", "namaKegiatan")
       .sort({ nomorAntrian: 1 });
 
-    // 4. Inisialisasi response
     const stats = {
       waiting: 0,
       serving: 0,
@@ -697,7 +608,6 @@ exports.getAdminStats = async (req, res) => {
     let nextInLine = null;
     const waitingList = [];
 
-    // 5. Helper formatter (AMAN)
     const formatQueue = (q) => ({
       _id: q._id,
       nomorAntrian: q.nomorAntrian,
@@ -715,7 +625,6 @@ exports.getAdminStats = async (req, res) => {
         : null,
     });
 
-    // 6. Hitung statistik & susun data
     for (const q of queues) {
       const formatted = formatQueue(q);
 
@@ -731,7 +640,6 @@ exports.getAdminStats = async (req, res) => {
       }
     }
 
-    // 7. Kirim response
     res.status(200).json({
       status: "success",
       data: {
@@ -750,7 +658,6 @@ exports.getAdminStats = async (req, res) => {
   }
 };
 
-// Helper function
 function formatObj(q) {
   return {
     _id: q._id,
