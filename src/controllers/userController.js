@@ -27,7 +27,6 @@ const resolveMongoUser = async (req) => {
   return null;
 };
 
-
 const filterUserResponse = (user) => {
   if (!user) return null;
   const userObj = user.toObject ? user.toObject() : user;
@@ -287,14 +286,11 @@ exports.requestAdminAccess = async (req, res) => {
       );
 
       const message = {
-        notification: {
+        data: {
           title: "Pengajuan Terkirim! 📝",
           body: `Permintaan akses Admin di ${member.school?.namaSekolah} sedang diproses.`,
-        },
-        data: {
-          type: "ADMIN_REQUEST", // Untuk navigasi di Flutter nanti
+          type: "ADMIN_REQUEST",
           status: "PENDING",
-          click_action: "FLUTTER_NOTIFICATION_CLICK",
         },
         token: userFresh.fcmToken,
       };
