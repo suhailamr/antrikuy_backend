@@ -37,60 +37,41 @@ exports.getAllSchools = async (req, res) => {
 
 exports.getPendingSchools = async (req, res) => {
   try {
-    // 1. Ambil sekolah yang statusnya belum di-approve (penyediaAntrian: false)
     const pendingSchools = await School.find({ penyediaAntrian: false });
 
-    // 2. Gunakan map untuk memproses data pengaju
     const data = await Promise.all(
       pendingSchools.map(async (school) => {
-        try {
-          // Inisialisasi pengaju default
-          let userPengaju = { namaPengguna: "User Tidak Ditemukan", _id: null };
+        let userPengaju = null;
 
+        try {
           if (school.createdBy) {
-            // Cari user berdasarkan ID yang ada di field createdBy
-            const user = await User.findById(school.createdBy).select(
+            userPengaju = await User.findById(school.createdBy).select(
               "namaPengguna email fotoProfil"
             );
-            if (user) {
-              userPengaju = user;
-            }
-          } else {
-            // Fallback: Jika createdBy kosong, coba cari user yang terhubung ke ID sekolah ini
-            const fallbackUser = await User.findOne({
-              sekolah: school._id,
-            }).select("namaPengguna");
-            if (fallbackUser) {
-              userPengaju = fallbackUser;
-            }
           }
-
-          return {
-            school: school,
-            user: userPengaju,
-          };
-        } catch (innerError) {
-          // Jika satu item gagal (misal ID tidak valid), return data minimal agar tidak crash
-          console.error(
-            `🚨 Gagal memproses data sekolah ${school._id}:`,
-            innerError
+        } catch (e) {
+          console.warn(
+            "⚠️ User createdBy tidak valid:",
+            school.createdBy?.toString()
           );
-          return {
-            school: school,
-            user: { namaPengguna: "Error Data User", _id: null },
-          };
         }
+
+        return {
+          school,
+          user: userPengaju ?? {
+            _id: null,
+            namaPengguna: "User tidak ditemukan",
+          },
+        };
       })
     );
 
-    // Kirim hasil ke Flutter
     res.status(200).json({
       status: "success",
-      data: data,
+      data,
     });
   } catch (err) {
-    // Ini catch utama jika query ke database School sendiri yang gagal
-    console.error("🚨 Error Utama getPendingSchools:", err);
+    console.error("🚨 getPendingSchools ERROR:", err);
     res.status(500).json({
       message: "Server gagal memproses daftar pendaftaran",
     });
