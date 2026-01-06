@@ -12,7 +12,7 @@ router.patch("/me/media", protect, userController.updateMedia);
 router.put("/me/password", protect, userController.updatePassword);
 router.post("/request-admin", protect, userController.requestAdminAccess);
 router.put(
-  "/users/update-fcm",
+  "/update-fcm",
   protect,
   userController.updateFcmToken
 );
