@@ -44,7 +44,7 @@ exports.getMe = async (req, res) => {
     const member = await SchoolMember.findOne({
       user: user._id,
       status: { $regex: /^approved$/i }, // Regex agar case-insensitive
-    }).populate("school", "namaSekolah");
+    })
 
     // 3. Siapkan respon data user
     const userData = filterUserResponse(user);
