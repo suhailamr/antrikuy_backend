@@ -522,8 +522,18 @@ exports.approveAdminRequest = async (req, res) => {
 
 exports.requestNewSchool = async (req, res) => {
   try {
-    const { namaSekolah, npsn, kategoriSekolah, alamat, deskripsi, lat, lng } =
-      req.body;
+    // Ambil fotoUrl dari body (dikirim oleh Flutter setelah upload ke Firebase)
+    const {
+      namaSekolah,
+      npsn,
+      kategoriSekolah,
+      alamat,
+      deskripsi,
+      lat,
+      lng,
+      fotoUrl,
+    } = req.body;
+
     const userObjectId = req.user._id;
 
     const generatedId = `${namaSekolah
@@ -545,6 +555,7 @@ exports.requestNewSchool = async (req, res) => {
       lokasiMaps: { lat, lng },
       createdBy: userObjectId,
       status: "PENDING",
+      fotoUrl: fotoUrl || null, // Simpan URL dari Firebase
     });
 
     const savedSchool = await newSchool.save();
